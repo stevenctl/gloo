@@ -116,22 +116,24 @@ var _ = BeforeSuite(func() {
 	err = controller.NewBaseGatewayController(ctx, cfg)
 	Expect(err).ToNot(HaveOccurred())
 
-	err = k8sClient.Create(ctx, &api.GatewayClass{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: gatewayClassName,
-		},
-		Spec: api.GatewayClassSpec{
-			ControllerName: api.GatewayController(gatewayControllerName),
-			ParametersRef: &api.ParametersReference{
-				Group:     api.Group(v1alpha1.GatewayParametersGVK.Group),
-				Kind:      api.Kind(v1alpha1.GatewayParametersGVK.Kind),
-				Name:      wellknown.DefaultGatewayParametersName,
-				Namespace: ptr.To(api.Namespace("default")),
+	for _, gwclass := range []string{gatewayClassName, altGatewayClassName} {
+		err = k8sClient.Create(ctx, &api.GatewayClass{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: gwclass,
 			},
-		},
-	})
-	Expect(err).NotTo(HaveOccurred())
+			Spec: api.GatewayClassSpec{
+				ControllerName: api.GatewayController(gatewayControllerName),
+				ParametersRef: &api.ParametersReference{
+					Group:     api.Group(v1alpha1.GatewayParametersGVK.Group),
+					Kind:      api.Kind(v1alpha1.GatewayParametersGVK.Kind),
+					Name:      wellknown.DefaultGatewayParametersName,
+					Namespace: ptr.To(api.Namespace("default")),
+				},
+			},
+		})
+		Expect(err).NotTo(HaveOccurred())
 
+	}
 	err = k8sClient.Create(ctx, &v1alpha1.GatewayParameters{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      wellknown.DefaultGatewayParametersName,
