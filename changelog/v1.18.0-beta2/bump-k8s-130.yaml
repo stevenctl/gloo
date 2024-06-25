@@ -1,7 +1,7 @@
 changelog:
-- type: DEPENDENCY_BUMP
+- type: UPGRADE
   description: >
-    Bump dependencies to support Kubernetes 1.29
+    Bump dependencies to support Kubernetes 1.30
   issueLink: https://github.com/solo-io/gloo/issues/9683
   resolvesIssue: false
 - type: DEPENDENCY_BUMP
