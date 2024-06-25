@@ -81,7 +81,7 @@ require (
 	k8s.io/client-go v0.30.1
 	k8s.io/code-generator v0.30.1
 	k8s.io/component-base v0.30.1
-	k8s.io/kubectl v0.29.2
+	k8s.io/kubectl v0.30.1
 	k8s.io/utils v0.0.0-20230726121419-3b25d923346b
 	knative.dev/networking v0.0.0-20211210083629-bace06e98aee
 	knative.dev/pkg v0.0.0-20211206113427-18589ac7627e
@@ -369,7 +369,7 @@ replace (
 	k8s.io/component-base => k8s.io/component-base v0.30.1
 	k8s.io/component-helpers => k8s.io/component-helpers v0.30.1
 	// version of kube-openapi used by client-go v0.30.1
-	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20231010175941-2dd684a91f00
+	k8s.io/kube-openapi => k8s.io/kube-openapi v0.0.0-20240228011516-70dd3763d340
 	k8s.io/kubectl => k8s.io/kubectl v0.30.1
 	k8s.io/metrics => k8s.io/metrics v0.30.1
 	k8s.io/utils => k8s.io/utils v0.0.0-20230726121419-3b25d923346b
