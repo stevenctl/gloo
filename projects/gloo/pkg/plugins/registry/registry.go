@@ -19,6 +19,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/consul"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/cors"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/csrf"
+	customfilters "github.com/solo-io/gloo/projects/gloo/pkg/plugins/custom_filters"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/deprecated_cipher_passthrough"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/dynamic_forward_proxy"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/enterprise_warning"
@@ -58,9 +59,7 @@ import (
 	"github.com/solo-io/go-utils/contextutils"
 )
 
-var (
-	_ plugins.PluginRegistry = new(pluginRegistry)
-)
+var _ plugins.PluginRegistry = new(pluginRegistry)
 
 func Plugins(opts bootstrap.Opts) []plugins.Plugin {
 	var glooPlugins []plugins.Plugin
@@ -112,6 +111,7 @@ func Plugins(opts bootstrap.Opts) []plugins.Plugin {
 		deprecated_cipher_passthrough.NewPlugin(),
 		local_ratelimit.NewPlugin(),
 		istio_automtls.NewPlugin(opts.GlooGateway.IstioValues.SidecarOnGatewayEnabled),
+		customfilters.NewPlugin(),
 	)
 
 	if opts.KubeClient != nil {
