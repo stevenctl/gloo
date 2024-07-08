@@ -57,7 +57,7 @@ func flattenDelegatedRoutes(
 		}
 		return err
 	}
-	children := applyDelegationFilers(parentRef, parentMatch, rawChildren)
+	children := filterDelegatedChildren(parentRef, parentMatch, rawChildren)
 
 	// Child routes inherit the hostnames from the parent route
 	hostnames := make([]gwv1.Hostname, len(parent.Spec.Hostnames))

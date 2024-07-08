@@ -164,11 +164,6 @@ func (tc TestCase) Run(ctx context.Context) (map[types.NamespacedName]string, er
 			return nil, err
 		}
 
-		// equal, err := expected.Equals(actual)
-		// if err != nil {
-		// 	return nil, err
-		// }
-
 		results[gwNN] = cmp.Diff(expectedProxy, actual.Proxy, protocmp.Transform(), cmpopts.EquateNaNs())
 	}
 

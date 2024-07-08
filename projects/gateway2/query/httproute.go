@@ -18,7 +18,7 @@ import (
 )
 
 // HTTPRouteInfo contains pre-resolved backends (Services, Upstreams and delegate HTTPRoutes)
-// This allows all querying to happen upfront, and detailed logic for delegation to can be
+// This allows all querying to happen upfront, and detailed logic for delegation to happen
 // as part of translation.
 type HTTPRouteInfo struct {
 	// HTTPRoute with rules and matches filtered to only those
@@ -30,7 +30,6 @@ type HTTPRouteInfo struct {
 
 	// hostnameOverrides can replace the HTTPRoute hostnames with those that intersect
 	// the attached listener's hostname(s).
-	// R
 	HostnameOverrides []string
 
 	// Backends are pre-resolved here. This list will not contain delegates.

@@ -18,7 +18,7 @@ import (
 // the route matcher from the parent route.
 const inheritMatcherAnnotation = "delegation.gateway.solo.io/inherit-parent-matcher"
 
-// applyDelegationFilers filters the referenced children and their rules based
+// filterDelegatedChildren filters the referenced children and their rules based
 // on parent matchers, filters their hostnames, and applies parent matcher
 // inheritance
 //
@@ -36,7 +36,7 @@ const inheritMatcherAnnotation = "delegation.gateway.solo.io/inherit-parent-matc
 //   - The child route's query parameters must be a superset of the parent's query parameters
 //
 // If a child route's rule does not match the given parent match, it is not included in the route returned.
-func applyDelegationFilers(
+func filterDelegatedChildren(
 	parentRef types.NamespacedName,
 	parentMatch gwv1.HTTPRouteMatch,
 	children []*query.HTTPRouteInfo,
