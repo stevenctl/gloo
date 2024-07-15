@@ -429,7 +429,7 @@ func buildRoutesPerHost(
 	reporter reports.Reporter,
 ) {
 	for _, routeWithHosts := range routes {
-		parentRefReporter := reporter.Route(&routeWithHosts.HTTPRoute).ParentRef(routeWithHosts.ParentRef)
+		parentRefReporter := reporter.Route(&routeWithHosts.HTTPRoute).ParentRef(&routeWithHosts.ParentRef)
 		routes := httproute.TranslateGatewayHTTPRouteRules(
 			ctx,
 			pluginRegistry,

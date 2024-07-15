@@ -26,7 +26,7 @@ type HTTPRouteInfo struct {
 	gwv1.HTTPRoute
 
 	// ParentRef points to the Gateway (and optionally Listener) or HTTPRoute
-	ParentRef *gwv1.ParentReference
+	ParentRef gwv1.ParentReference
 
 	// hostnameOverrides can replace the HTTPRoute hostnames with those that intersect
 	// the attached listener's hostname(s).
@@ -36,6 +36,7 @@ type HTTPRouteInfo struct {
 	// Map values are either client.Object or error (errors can be passed to ProcessBackendRef).
 	// TODO should we ProcessBackendRef early and put cluster names here?)
 	Backends BackendMap[client.Object]
+
 	// Children contains all delegate HTTPRoutes referenced in any rule of this
 	// HTTPRoute, keyed by the backend ref for easy lookup.
 	// This tree structure can have cyclic references. Check them when recursing through the tree.
@@ -75,14 +76,15 @@ func (hr *HTTPRouteInfo) Clone() *HTTPRouteInfo {
 	}
 	return &HTTPRouteInfo{
 		HTTPRoute: hr.HTTPRoute,
-		ParentRef: hr.ParentRef.DeepCopy(),
+		ParentRef: hr.ParentRef,
 		Backends:  hr.Backends,
 		Children:  hr.Children,
 	}
 }
 
 // GetHTTPRouteChain recursively resolves all backends of the given HTTPRoute.
-// While this includes delgated HTTPRoutes, validation of matchers is not applied here.
+// While this includes delegated HTTPRoutes, validation of matchers is not applied here.
+// Instead, matcher processing is handled during translation.
 // Errors for unresolved or cyclic backend references will be surfaced on the HTTPRouteInfo.
 func (r *gatewayQueries) GetHTTPRouteChain(
 	ctx context.Context,
@@ -93,7 +95,7 @@ func (r *gatewayQueries) GetHTTPRouteChain(
 	return &HTTPRouteInfo{
 		HTTPRoute:         route,
 		HostnameOverrides: hostnames,
-		ParentRef:         &parentRef,
+		ParentRef:         parentRef,
 		Backends:          r.resolveRouteBackends(ctx, &route),
 		Children:          r.getDelegatedChildren(ctx, &route, nil),
 	}
@@ -272,17 +274,16 @@ func (r *gatewayQueries) getDelegatedChildren(
 				continue
 			}
 			for _, childRoute := range referencedRoutes {
-				childRoute := childRoute // pike: ptr to loop item
 				childRef := namespacedName(&childRoute)
 				if visited.Has(childRef) {
 					err := fmt.Errorf("ignoring child route %s for parent %s: %w", parentRef, childRef, ErrCyclicReference)
 					children.AddError(backendRef.BackendObjectReference, err)
 					// don't resolve child routes; the entire backendRef is invalid
-					break
+					continue
 				}
 				routeInfo := &HTTPRouteInfo{
 					HTTPRoute: childRoute,
-					ParentRef: &gwv1.ParentReference{
+					ParentRef: gwv1.ParentReference{
 						Group:     ptr.To(gwv1.Group(wellknown.GatewayGroup)),
 						Kind:      ptr.To(gwv1.Kind(wellknown.HTTPRouteKind)),
 						Namespace: ptr.To(gwv1.Namespace(parent.Namespace)),

@@ -474,8 +474,7 @@ var _ = Describe("Query", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(routes.RouteErrors).To(HaveLen(1))
 			Expect(routes.ListenerResults["foo"].Routes).To(HaveLen(1))
-			Expect(*routes.ListenerResults["foo"].Routes[0].ParentRef).To(Not(BeNil()))
-			Expect(*routes.ListenerResults["foo"].Routes[0].ParentRef).To(Equal(apiv1.ParentReference{
+			Expect(routes.ListenerResults["foo"].Routes[0].ParentRef).To(Equal(apiv1.ParentReference{
 				Name: hr.Spec.ParentRefs[1].Name,
 			}))
 			Expect(routes.RouteErrors[0].Error.E).To(MatchError(query.ErrNoMatchingParent))
