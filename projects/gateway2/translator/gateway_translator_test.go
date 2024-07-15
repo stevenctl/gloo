@@ -82,14 +82,10 @@ var _ = Describe("GatewayTranslator", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(results).To(HaveLen(1))
-		Expect(results).To(HaveKey(types.NamespacedName{
+		ExpectKeyWithNoDiff(results, types.NamespacedName{
 			Namespace: "default",
 			Name:      "http",
-		}))
-		Expect(results[types.NamespacedName{
-			Namespace: "default",
-			Name:      "http",
-		}]).To(BeTrue())
+		})
 	})
 
 	It("should translate a gateway with https routing with multiple listeners on the same port", func() {
@@ -109,14 +105,10 @@ var _ = Describe("GatewayTranslator", func() {
 
 		Expect(err).NotTo(HaveOccurred())
 		Expect(results).To(HaveLen(1))
-		Expect(results).To(HaveKey(types.NamespacedName{
+		ExpectKeyWithNoDiff(results, types.NamespacedName{
 			Namespace: "default",
 			Name:      "http",
-		}))
-		Expect(results[types.NamespacedName{
-			Namespace: "default",
-			Name:      "http",
-		}]).To(BeTrue())
+		})
 	})
 
 	It("should translate an http gateway with multiple routing rules and use the HeaderModifier filter", func() {
