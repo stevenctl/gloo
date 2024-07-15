@@ -19,7 +19,7 @@ import (
 // This function will also set the appropriate condition on the parent via the reporter.
 func ProcessBackendRef(obj client.Object, err error, reporter reports.ParentRefReporter, backendRef gwv1.BackendObjectReference) *string {
 	if err != nil {
-		processBackendError(err, reporter)
+		ProcessBackendError(err, reporter)
 		return nil
 	}
 	var port uint32
@@ -52,7 +52,7 @@ func ProcessBackendRef(obj client.Object, err error, reporter reports.ParentRefR
 	return nil
 }
 
-func processBackendError(err error, reporter reports.ParentRefReporter) {
+func ProcessBackendError(err error, reporter reports.ParentRefReporter) {
 	switch {
 	case errors.Is(err, ErrUnknownKind):
 		reporter.SetCondition(reports.HTTPRouteCondition{
