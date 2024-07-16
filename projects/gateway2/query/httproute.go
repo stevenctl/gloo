@@ -278,7 +278,7 @@ func (r *gatewayQueries) getDelegatedChildren(
 				if visited.Has(childRef) {
 					err := fmt.Errorf("ignoring child route %s for parent %s: %w", parentRef, childRef, ErrCyclicReference)
 					children.AddError(backendRef.BackendObjectReference, err)
-					// don't resolve child routes; the entire backendRef is invalid
+					// don't resolve invalid child route
 					continue
 				}
 				routeInfo := &HTTPRouteInfo{
