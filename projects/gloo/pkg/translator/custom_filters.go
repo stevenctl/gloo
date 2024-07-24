@@ -1,4 +1,4 @@
-package customfilters
+package translator
 
 import (
 	listenerv3 "github.com/envoyproxy/go-control-plane/envoy/config/listener/v3"
@@ -7,31 +7,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 )
 
-var (
-	_ plugins.Plugin              = new(plugin)
-	_ plugins.NetworkFilterPlugin = new(plugin)
-	_ plugins.HttpFilterPlugin    = new(plugin)
-)
-
-const (
-	ExtensionName = "custom_filters"
-)
-
-type plugin struct{}
-
-func NewPlugin() plugins.Plugin {
-	return plugin{}
-}
-
-func (p plugin) Init(params plugins.InitParams) {
-	// noop
-}
-
-func (p plugin) Name() string {
-	return ExtensionName
-}
-
-func (p plugin) NetworkFiltersHTTP(params plugins.Params, listener *v1.HttpListener) ([]plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter], error) {
+func CustomNetworkFiltersHTTP(listener *v1.HttpListener) []plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter] {
 	var out []plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter]
 	for _, customFilter := range listener.GetCustomNetworkFilters() {
 		out = append(out, plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter]{
@@ -44,10 +20,10 @@ func (p plugin) NetworkFiltersHTTP(params plugins.Params, listener *v1.HttpListe
 			Stage: *plugins.ConvertFilterStage(customFilter.GetFilterStage()),
 		})
 	}
-	return out, nil
+	return out
 }
 
-func (p plugin) NetworkFiltersTCP(params plugins.Params, listener *v1.TcpListener) ([]plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter], error) {
+func CustomNetworkFiltersTCP(listener *v1.TcpListener) []plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter] {
 	var out []plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter]
 	for _, customFilter := range listener.GetCustomNetworkFilters() {
 		out = append(out, plugins.StagedFilter[plugins.WellKnownFilterStage, *listenerv3.Filter]{
@@ -60,10 +36,10 @@ func (p plugin) NetworkFiltersTCP(params plugins.Params, listener *v1.TcpListene
 			Stage: *plugins.ConvertFilterStage(customFilter.GetFilterStage()),
 		})
 	}
-	return out, nil
+	return out
 }
 
-func (p plugin) HttpFilters(params plugins.Params, listener *v1.HttpListener) ([]plugins.StagedFilter[plugins.WellKnownFilterStage, *http_connection_managerv3.HttpFilter], error) {
+func CustomHttpFilters(listener *v1.HttpListener) []plugins.StagedFilter[plugins.WellKnownFilterStage, *http_connection_managerv3.HttpFilter] {
 	var out []plugins.StagedFilter[plugins.WellKnownFilterStage, *http_connection_managerv3.HttpFilter]
 	for _, customFilter := range listener.GetCustomHttpFilters() {
 		out = append(out, plugins.StagedFilter[plugins.WellKnownFilterStage, *http_connection_managerv3.HttpFilter]{
@@ -76,5 +52,5 @@ func (p plugin) HttpFilters(params plugins.Params, listener *v1.HttpListener) ([
 			Stage: *plugins.ConvertFilterStage(customFilter.GetFilterStage()),
 		})
 	}
-	return out, nil
+	return out
 }
