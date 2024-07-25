@@ -3927,16 +3927,22 @@ var _ = Describe("Translator", func() {
 					Stage:     filters.FilterStage_AuthZStage,
 					Predicate: filters.FilterStage_After,
 				},
-				Name:   "my-custom-filter",
-				Config: &anypb.Any{},
+				Name: "my-custom-filter",
+				Config: &anypb.Any{
+					TypeUrl: "type.googleapis.com/testing.config.TestNetworkFilter",
+					Value:   []byte("foobar-tcp"),
+				},
 			}}
 			httpListener.CustomHttpFilters = []*v1.CustomEnvoyFilter{{
 				FilterStage: &filters.FilterStage{
 					Stage:     filters.FilterStage_AuthZStage,
 					Predicate: filters.FilterStage_After,
 				},
-				Name:   "my-custom-http-filter",
-				Config: &anypb.Any{},
+				Name: "my-custom-http-filter",
+				Config: &anypb.Any{
+					TypeUrl: "type.googleapis.com/testing.config.TestHTTPFilter",
+					Value:   []byte("foobar-http"),
+				},
 			}}
 
 			translate()
@@ -3946,7 +3952,10 @@ var _ = Describe("Translator", func() {
 			Expect(fc.Filters).To(ContainElements(MatchPublicFields(&listenerv3.Filter{
 				Name: "my-custom-filter",
 				ConfigType: &listenerv3.Filter_TypedConfig{
-					TypedConfig: &anypb.Any{},
+					TypedConfig: &anypb.Any{
+						TypeUrl: "type.googleapis.com/testing.config.TestNetworkFilter",
+						Value:   []byte("foobar-tcp"),
+					},
 				},
 			})))
 
@@ -3963,7 +3972,10 @@ var _ = Describe("Translator", func() {
 			Expect(hcm.GetHttpFilters()).To(ContainElements(MatchPublicFields(&envoyhttp.HttpFilter{
 				Name: "my-custom-http-filter",
 				ConfigType: &envoyhttp.HttpFilter_TypedConfig{
-					TypedConfig: &anypb.Any{},
+					TypedConfig: &anypb.Any{
+						TypeUrl: "type.googleapis.com/testing.config.TestHTTPFilter",
+						Value:   []byte("foobar-http"),
+					},
 				},
 			})))
 		})
@@ -3975,15 +3987,21 @@ var _ = Describe("Translator", func() {
 					Stage:     filters.FilterStage_AuthZStage,
 					Predicate: filters.FilterStage_After,
 				},
-				Name:   "my-custom-filter",
-				Config: &anypb.Any{},
+				Name: "my-custom-filter",
+				Config: &anypb.Any{
+					TypeUrl: "type.googleapis.com/testing.config.TestNetworkFilter",
+					Value:   []byte("foobar-tcp"),
+				},
 			}}
 			translate()
 			lis := snapshot.GetResources(types.ListenerTypeV3).Items["hybrid-listener"].ResourceProto().(*listenerv3.Listener)
 			Expect(lis.FilterChains[0].Filters).To(ContainElements(MatchPublicFields(&listenerv3.Filter{
 				Name: "my-custom-filter",
 				ConfigType: &listenerv3.Filter_TypedConfig{
-					TypedConfig: &anypb.Any{},
+					TypedConfig: &anypb.Any{
+						TypeUrl: "type.googleapis.com/testing.config.TestNetworkFilter",
+						Value:   []byte("foobar-tcp"),
+					},
 				},
 			})))
 		})
