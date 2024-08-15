@@ -47,6 +47,8 @@ spec:
           {{- toYaml $gateway.securityContext | nindent 10 }}
         {{- end }}
         args:
+        - "--concurrency"
+        - "2"
         - "--disable-hot-restart"
         - "--service-node"
         - $(POD_NAME).$(POD_NAMESPACE)
