@@ -1,4 +1,5 @@
 changelog:
-  - type: NON_USER_FACING
+  - type: FIX
+    issueLink: https://github.com/solo-io/gloo/issues/9915
     description: >-
       Don't multiply custom filters by plugins.
