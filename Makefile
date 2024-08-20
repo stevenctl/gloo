@@ -167,6 +167,7 @@ install-go-tools: mod-download ## Download and install Go dependencies
 	go install github.com/cratonica/2goarray
 	go install github.com/golang/mock/mockgen
 	go install github.com/saiskee/gettercheck
+	go install github.com/onsi/ginkgo/v2/ginkgo@$(GINKGO_VERSION)
 	# This version must stay in sync with the version used in CI: .github/workflows/static-analysis.yaml
 	go install github.com/golangci/golangci-lint/cmd/golangci-lint@$(LINTER_VERSION)
 	go install github.com/quasilyte/go-ruleguard/cmd/ruleguard@v0.3.16
@@ -420,6 +421,10 @@ generated-code-apis: clean-solo-kit-gen go-generate-apis fmt ## Executes the tar
 
 .PHONY: generated-code-cleanup
 generated-code-cleanup: getter-check mod-tidy update-licenses fmt ## Executes the targets necessary to cleanup and format code
+
+.PHONY: generate-changelog
+generate-changelog: ## Generate a changelog entry
+	@./devel/tools/changelog.sh
 
 #----------------------------------------------------------------------------------
 # Generate mocks
