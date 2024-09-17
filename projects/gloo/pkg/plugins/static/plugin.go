@@ -57,6 +57,9 @@ func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
 	if !ok {
 		return nil, nil
 	}
+	if staticSpec.Static.IsMesh {
+		return nil, nil
+	}
 	if len(staticSpec.Static.GetHosts()) == 0 {
 		return nil, errors.Errorf("must provide at least 1 host in static spec")
 	}
@@ -71,6 +74,10 @@ func (p *plugin) Init(params plugins.InitParams) {
 func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
 	staticSpec, ok := in.GetUpstreamType().(*v1.Upstream_Static)
 	if !ok {
+		// not ours
+		return nil
+	}
+	if staticSpec.Static.IsMesh {
 		// not ours
 		return nil
 	}
