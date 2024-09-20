@@ -57,6 +57,9 @@ func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
 	if !ok {
 		return nil, nil
 	}
+	if staticSpec.InMesh {
+		return nil, nil
+	}
 	if len(staticSpec.Static.GetHosts()) == 0 {
 		return nil, errors.Errorf("must provide at least 1 host in static spec")
 	}
@@ -73,6 +76,9 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	if !ok {
 		// not ours
 		return nil
+	}
+	if staticSpec.InMesh {
+		return nil, nil
 	}
 
 	spec := staticSpec.Static

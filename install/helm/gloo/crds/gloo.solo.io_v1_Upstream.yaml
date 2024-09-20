@@ -1658,6 +1658,8 @@ spec:
                           type: string
                       type: object
                     type: array
+                  inMesh:
+                    type: boolean
                   serviceSpec:
                     properties:
                       graphql:
