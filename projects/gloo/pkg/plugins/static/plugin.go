@@ -57,7 +57,7 @@ func (p *plugin) Resolve(u *v1.Upstream) (*url.URL, error) {
 	if !ok {
 		return nil, nil
 	}
-	if staticSpec.Static.InMesh {
+	if staticSpec.Static.GetInMesh() {
 		return nil, nil
 	}
 	if len(staticSpec.Static.GetHosts()) == 0 {
@@ -77,7 +77,7 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 		// not ours
 		return nil
 	}
-	if staticSpec.Static.InMesh {
+	if staticSpec.Static.GetInMesh() {
 		return nil
 	}
 
