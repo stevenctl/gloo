@@ -42,6 +42,7 @@ func mustBuildIstioClient() kubeclient.Client {
 	}
 
 	kubeclient.EnableCrdWatcher(client)
+	println("stevenctl: built kube client with crd watcher")
 
 	return client
 }

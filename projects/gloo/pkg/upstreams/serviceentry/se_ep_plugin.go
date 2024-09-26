@@ -3,9 +3,13 @@ package serviceentry
 import (
 	"net"
 	"strconv"
+	"strings"
 
 	"github.com/solo-io/gloo/projects/gloo/pkg/discovery"
+	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 
+	cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
+	envoycore "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients"
 	core "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -22,7 +26,34 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-var _ discovery.DiscoveryPlugin = &sePlugin{}
+var (
+	_ discovery.DiscoveryPlugin = &sePlugin{}
+	_ plugins.UpstreamPlugin    = &sePlugin{}
+)
+
+// ProcessUpstream implements plugins.UpstreamPlugin.
+func (s *sePlugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *cluster_v3.Cluster) error {
+	staticSpec, ok := in.GetUpstreamType().(*v1.Upstream_Static)
+	if !ok {
+		return nil
+	}
+	if !staticSpec.Static.GetIsMesh() {
+		return nil
+	}
+	// tell Envoy to use EDS to get endpoints for this cluster
+	out.ClusterDiscoveryType = &cluster_v3.Cluster_Type{
+		Type: cluster_v3.Cluster_EDS,
+	}
+	// tell envoy to use ADS to resolve Endpoints
+	out.EdsClusterConfig = &cluster_v3.Cluster_EdsClusterConfig{
+		EdsConfig: &envoycore.ConfigSource{
+			ConfigSourceSpecifier: &envoycore.ConfigSource_Ads{
+				Ads: &envoycore.AggregatedConfigSource{},
+			},
+		},
+	}
+	return nil
+}
 
 const (
 	podEndpointPrefix = "istio-se-pod-ep"
@@ -30,7 +61,7 @@ const (
 )
 
 func epName(seName, resKind, resName, ns string) string {
-	return "se-" + seName + "-ep-" + resKind + "-" + resName + "-" + ns
+	return strings.ToLower("se-" + seName + "-ep-" + resKind + "-" + resName + "-" + ns)
 }
 
 type epBuildFunc[T any] func(
@@ -72,6 +103,7 @@ func buildWorkloadEntryEndpoint(
 	svcPort uint32,
 	portName string,
 ) *v1.Endpoint {
+	println("stevenctl figuring out we port from ", svcPort, portName)
 	port := svcPort
 	if wePort := we.Spec.Ports[portName]; wePort > 0 {
 		port = wePort
@@ -88,7 +120,6 @@ func buildWorkloadEntryEndpoint(
 		},
 		Address: we.Spec.Address,
 		Port:    port,
-		// Hostname:    "",
 	}
 }
 
@@ -97,6 +128,7 @@ func (s *sePlugin) WatchEndpoints(
 	upstreamsToTrack v1.UpstreamList,
 	opts clients.WatchOpts,
 ) (<-chan v1.EndpointList, <-chan error, error) {
+	println("stevenctl: starting new WatchEndpoints")
 	defaultFilter := kclient.Filter{ObjectFilter: s.client.ObjectFilter()}
 
 	// watch service entries everywhere, they're referenced by global hostnames
@@ -108,7 +140,7 @@ func (s *sePlugin) WatchEndpoints(
 
 	// since we watch ServiceEntry everywhere, we must do the same for WorkloadEntries
 	weInformer := kclient.NewDelayedInformer[*networkingclient.WorkloadEntry](s.client,
-		gvr.ServiceEntry, kubetypes.StandardInformer, defaultFilter)
+		gvr.WorkloadEntry, kubetypes.StandardInformer, defaultFilter)
 	WorkloadEntries := krt.WrapClient(weInformer, krt.WithName("WorkloadEntries"))
 
 	// since we watch ServiceEntry everywhere, we must do the same for Pods
@@ -141,24 +173,17 @@ func (s *sePlugin) WatchEndpoints(
 		seInlineEndpoints,
 	})
 
-	// TODO inline endpoints from serviceentry
-	// seEndpoints := krt.NewManyCollection[*networkingclient.ServiceEntry, *v1.Endpoint](ServiceEntries, weEndpoints(
-	// 	...
-	// ))
-
-	// TODO also handle Upstream_Kube for Waypoint usecase:
-	// * ServiceEntry will gen Upstream_Kube so users can use it just like in Istio
-	// * We also need to allow Service selects WorkloadEntry for Istio parity
-
 	// push updates to watcher
-	endpointsChan := make(chan v1.EndpointList)
+	endpointsChan := make(chan v1.EndpointList, 1)
 	errs := make(chan error)
 	allEndpoints.RegisterBatch(func(_ []krt.Event[glooEndpoint], _ bool) {
-		ep := endpoints(podEndpoints.List()).Unwrap()
+		ep := endpoints(allEndpoints.List()).Unwrap()
+		println("stevenctl: got endpoints list in krt world with len: ", len(ep))
 		select {
 		case endpointsChan <- ep:
 		default:
 		}
+		println("stevenctl: finish ep list enqueuee")
 	}, true)
 	go func() {
 		<-opts.Ctx.Done()
@@ -166,11 +191,18 @@ func (s *sePlugin) WatchEndpoints(
 		close(errs)
 	}()
 
+	go weInformer.Start(opts.Ctx.Done())
 	go seInformer.Start(opts.Ctx.Done())
 	go podInformer.Start(opts.Ctx.Done())
 	// TODO the client doesn't need to be run on every WatchEndpoints call
 	// TODO maybe it's better to only set up new Upstream-dependent collections for each Watch
 	go s.client.RunAndWait(opts.Ctx.Done())
+
+	println("stevenctl: started all informers for serviceentry")
+
+	s.client.WaitForCacheSync("serviceentry plugin", opts.Ctx.Done(), allEndpoints.Synced().HasSynced)
+
+	println("caches synced")
 
 	return endpointsChan, errs, nil
 }
@@ -208,6 +240,7 @@ func serviceEntriesWithUpstreams(
 	upstreamServiceEntries := krt.NewCollection(ServiceEntries, func(ctx krt.HandlerContext, se *networkingclient.ServiceEntry) *serviceEntryUpstreams {
 		referencingUs := make(map[uint32][]upstream, len(se.Spec.Ports))
 		portMapping := make(map[uint32]uint32, len(se.Spec.Ports))
+		portNames := make(map[uint32]string, len(se.Spec.Ports))
 		for _, host := range se.Spec.Hosts {
 			for _, port := range se.Spec.Ports {
 				key := net.JoinHostPort(host, strconv.Itoa(int(port.Number)))
@@ -219,6 +252,8 @@ func serviceEntriesWithUpstreams(
 					targetPort = port.TargetPort
 				}
 				portMapping[port.Number] = targetPort
+				portNames[port.Number] = port.Name
+				println("stevenctl: map ", port.Number, " to ", targetPort)
 			}
 		}
 		if len(referencingUs) == 0 {
@@ -228,6 +263,7 @@ func serviceEntriesWithUpstreams(
 			ServiceEntry: se,
 			upstreams:    referencingUs,
 			targetPorts:  portMapping,
+			portNames:    portNames,
 		}
 	})
 	seNsIndex := krt.NewNamespaceIndex(upstreamServiceEntries)
@@ -247,9 +283,10 @@ func seInlineEndpoints(
 
 		eps := map[uint32]*v1.Endpoint{}
 		for i, we := range se.Spec.GetEndpoints() {
+			println("stevenctl: build SE inline endpoints: ", we.GetAddress())
 			weNamed := &networkingclient.WorkloadEntry{
 				ObjectMeta: metav1.ObjectMeta{
-					Name:      se.Name + "inline-" + strconv.Itoa(i),
+					Name:      "inline-" + strconv.Itoa(i),
 					Namespace: se.Namespace,
 					Labels:    we.Labels,
 				},
@@ -258,7 +295,14 @@ func seInlineEndpoints(
 			}
 			generateEndpointsForServiceEntry(writeNamespace, se, eps, weNamed, buildWorkloadEntryEndpoint)
 		}
-		return nil
+		println("stevenctl have this many: ", len(eps))
+		var glooEps []glooEndpoint
+		for _, ep := range eps {
+			glooEps = append(glooEps, glooEndpoint{
+				Endpoint: ep,
+			})
+		}
+		return glooEps
 	})
 }
 
@@ -357,7 +401,9 @@ func generateEndpointsForServiceEntry[T any](
 			endpoint = mappingFunc(se, o, writeNamespace, svcPort, portName)
 			endpointsByPort[svcPort] = endpoint
 		}
+
 		for _, us := range upstreams {
+			println("stevenctl: se point at us: ", us.GetMetadata().Name, " in ", us.GetMetadata().Namespace)
 			endpoint.Upstreams = append(endpoint.Upstreams, &core.ResourceRef{
 				Name:      us.GetMetadata().GetName(),
 				Namespace: us.GetMetadata().GetNamespace(),
