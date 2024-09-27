@@ -4,12 +4,12 @@ import (
 	"context"
 	"errors"
 
-	"google.golang.org/protobuf/runtime/protoiface"
+	// "google.golang.org/protobuf/runtime/protoiface"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
-	sologatewayv1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1/kube/apis/gateway.solo.io/v1"
+	// sologatewayv1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1/kube/apis/gateway.solo.io/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/gloosnapshot"
 	glookubev1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/kube/apis/gloo.solo.io/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/kubernetes"
@@ -19,7 +19,7 @@ import (
 	// solokubecrd "github.com/solo-io/solo-kit/pkg/api/v1/clients/kube/crd/solo.io/v1"
 	// "github.com/solo-io/solo-kit/pkg/api/v1/resources"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/kubesecret"
-	"github.com/solo-io/solo-kit/pkg/api/v1/resources"
+	// "github.com/solo-io/solo-kit/pkg/api/v1/resources"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 	"github.com/solo-io/solo-kit/pkg/api/v2/reporter"
 	istiogvr "istio.io/istio/pkg/config/schema/gvr"
@@ -262,29 +262,16 @@ func (us *upstream) Equals(in *upstream) bool {
 type fromKrtSnap struct {
 	cfgMaps   []*corev1.ConfigMap
 	endpoints []*glooEndpoint
-	rtOpts    []*sologatewayv1.RouteOption
+	// rtOpts    []*sologatewayv1.RouteOption
 	secrets   []*corev1.Secret
 	upstreams []*upstream
-	vhostOpts []*sologatewayv1.VirtualHostOption
+	// vhostOpts []*sologatewayv1.VirtualHostOption
 }
 
 func (s *ProxySyncer) Start(ctx context.Context) error {
 	ctx = contextutils.WithLogger(ctx, "k8s-gw-syncer")
 
 	// create krt collections needed for building ApiSnapshot
-	// RouteOptions := setupCollectionDynamic[sologatewayv1.RouteOption](
-	// 	ctx,
-	// 	s.istioClient,
-	// 	sologatewayv1.SchemeGroupVersion.WithResource("routeoptions"),
-	// 	krt.WithName("RouteOptions"),
-	// )
-	// VirtualHostOptions := setupCollectionDynamic[sologatewayv1.VirtualHostOption](
-	// 	ctx,
-	// 	s.istioClient,
-	// 	sologatewayv1.SchemeGroupVersion.WithResource("virtualhostoptions"),
-	// 	krt.WithName("VirtualHostOptions"),
-	// )
-
 	// TODO: handle cfgmap noisiness:
 	// https://github.com/solo-io/gloo/blob/main/projects/gloo/pkg/api/converters/kube/artifact_converter.go#L31
 	configMapClient := kclient.New[*corev1.ConfigMap](s.istioClient)
@@ -293,7 +280,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	secretClient := kclient.New[*corev1.Secret](s.istioClient)
 	secrets := krt.WrapClient(secretClient, krt.WithName("Secrets"))
 
-	KubeUpstreams := setupCollectionDynamic[glookubev1.Upstream](
+	KubeUpstreams, kubeUsClient := setupCollectionDynamic[glookubev1.Upstream](
 		ctx,
 		s.istioClient,
 		glookubev1.SchemeGroupVersion.WithResource("upstreams"),
@@ -359,7 +346,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 		return out
 	}, krt.WithName("GlooEndpoints"))
 
-	kubeGateways := setupCollectionDynamic[gwv1.Gateway](
+	kubeGateways, kubeGwClient := setupCollectionDynamic[gwv1.Gateway](
 		ctx,
 		s.istioClient,
 		istiogvr.KubernetesGateway_v1,
@@ -407,6 +394,18 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 
 	go s.istioClient.RunAndWait(ctx.Done())
 
+	s.istioClient.WaitForCacheSync(
+		"ggv2 proxy syncer",
+		ctx.Done(),
+		configMapClient.HasSynced,
+		secretClient.HasSynced,
+		serviceClient.HasSynced,
+		epClient.HasSynced,
+		podClient.HasSynced,
+		kubeUsClient.HasSynced,
+		kubeGwClient.HasSynced,
+	)
+
 	// wait for caches to sync before accepting events and syncing xds
 	if !s.mgr.GetCache().WaitForCacheSync(ctx) {
 		return errors.New("kube gateway sync loop waiting for all caches to sync failed")
@@ -422,6 +421,52 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 		case <-s.inputs.secretEvent.Next():
 			proxyTrigger.TriggerRecomputation()
 		}
+	}
+}
+
+func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooProxy {
+	stopwatch := statsutils.NewTranslatorStopWatch("ProxySyncer")
+	stopwatch.Start()
+	var (
+		proxies gloov1.ProxyList
+	)
+	defer func() {
+		duration := stopwatch.Stop(ctx)
+		contextutils.LoggerFrom(ctx).Debugf("translated and wrote %d proxies in %s", len(proxies), duration.String())
+	}()
+
+	pluginRegistry := s.k8sGwExtensions.CreatePluginRegistry(ctx)
+	rm := reports.NewReportMap()
+	r := reports.NewReporter(&rm)
+
+	var translatedGateways []gwplugins.TranslatedGateway
+	gatewayTranslator := s.k8sGwExtensions.GetTranslator(ctx, gw, pluginRegistry)
+	if gatewayTranslator == nil {
+		contextutils.LoggerFrom(ctx).Errorf("no translator found for Gateway %s (gatewayClass %s)", gw.Name, gw.Spec.GatewayClassName)
+		return nil
+	}
+	proxy := gatewayTranslator.TranslateProxy(ctx, gw, s.writeNamespace, r)
+	if proxy != nil {
+		proxies = append(proxies, proxy)
+		translatedGateways = append(translatedGateways, gwplugins.TranslatedGateway{
+			Gateway: *gw,
+		})
+	}
+
+	applyPostTranslationPlugins(ctx, pluginRegistry, &gwplugins.PostTranslationContext{
+		TranslatedGateways: translatedGateways,
+	})
+
+	// reconcile proxy for extensions
+	s.reconcileProxies(ctx, proxies)
+
+	// sync gateway api resource status
+	s.syncGatewayStatus(ctx, rm, gw)
+	s.syncRouteStatus(ctx, rm)
+
+	return &glooProxy{
+		proxy:          proxy,
+		pluginRegistry: pluginRegistry,
 	}
 }
 
@@ -500,109 +545,17 @@ func (s *ProxySyncer) buildXdsSnapshot(ctx context.Context, proxy *glooProxy, k 
 	return &out
 }
 
-func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooProxy {
-	stopwatch := statsutils.NewTranslatorStopWatch("ProxySyncer")
-	stopwatch.Start()
-	var (
-		proxies gloov1.ProxyList
-	)
-	defer func() {
-		duration := stopwatch.Stop(ctx)
-		contextutils.LoggerFrom(ctx).Debugf("translated and wrote %d proxies in %s", len(proxies), duration.String())
-	}()
-
-	pluginRegistry := s.k8sGwExtensions.CreatePluginRegistry(ctx)
-	rm := reports.NewReportMap()
-	r := reports.NewReporter(&rm)
-
-	var translatedGateways []gwplugins.TranslatedGateway
-	gatewayTranslator := s.k8sGwExtensions.GetTranslator(ctx, gw, pluginRegistry)
-	if gatewayTranslator == nil {
-		contextutils.LoggerFrom(ctx).Errorf("no translator found for Gateway %s (gatewayClass %s)", gw.Name, gw.Spec.GatewayClassName)
-		return nil
-	}
-	proxy := gatewayTranslator.TranslateProxy(ctx, gw, s.writeNamespace, r)
-	if proxy != nil {
-		proxies = append(proxies, proxy)
-		translatedGateways = append(translatedGateways, gwplugins.TranslatedGateway{
-			Gateway: *gw,
-		})
-	}
-
-	applyPostTranslationPlugins(ctx, pluginRegistry, &gwplugins.PostTranslationContext{
-		TranslatedGateways: translatedGateways,
-	})
-
-	// reconcile proxy for extensions
-	s.reconcileProxies(ctx, proxies)
-
-	// sync gateway api resource status
-	s.syncStatus(ctx, rm, gw)
-	s.syncRouteStatus(ctx, rm)
-
-	return &glooProxy{
-		proxy:          proxy,
-		pluginRegistry: pluginRegistry,
-	}
-}
-
-type metaObjWithSpec interface {
-	metav1.Object
-	GetSpec() protoiface.MessageV1
-}
-
-type rtOptWrapper struct {
-	*sologatewayv1.RouteOption
-}
-
-func wrapRtOpts(in []*sologatewayv1.RouteOption) []*rtOptWrapper {
-	out := make([]*rtOptWrapper, 0, len(in))
-	for _, i := range in {
-		out = append(out, &rtOptWrapper{i})
-	}
-	return out
-}
-
-func (x *rtOptWrapper) GetSpec() protoiface.MessageV1 {
-	return &x.Spec
-}
-
-type vhostOptWrapper struct {
-	*sologatewayv1.VirtualHostOption
-}
-
-func wrapVhosts(in []*sologatewayv1.VirtualHostOption) []*vhostOptWrapper {
-	out := make([]*vhostOptWrapper, 0, len(in))
-	for _, i := range in {
-		out = append(out, &vhostOptWrapper{i})
-	}
-	return out
-}
-
-func (x *vhostOptWrapper) GetSpec() protoiface.MessageV1 {
-	return &x.Spec
-}
-
-func unwrapGlooKubeTypes[I metaObjWithSpec, O resources.Resource](in []I) []O {
-	out := make([]O, 0, len(in))
-	for _, i := range in {
-		o := proto.Clone(i.GetSpec()).(O)
-		m := &core.Metadata{
-			Name:      i.GetName(),
-			Namespace: i.GetNamespace(),
-		}
-		o.SetMetadata(m)
-		out = append(out, o)
-	}
-	return out
-}
-
 // setupCollectionDynamic uses the dynamic client to setup an informer for a resource
 // and then uses an intermediate krt collection to type the unstructured resource.
 // This is a temporary workaround until we update to the latest istio version and can
 // uncomment the code below for registering types.
 // HACK: we don't want to use this long term, but it's letting me push forward with deveopment
-func setupCollectionDynamic[T any](ctx context.Context, client kube.Client, gvr schema.GroupVersionResource, opts ...krt.CollectionOption) krt.Collection[*T] {
+func setupCollectionDynamic[T any](
+	ctx context.Context,
+	client kube.Client,
+	gvr schema.GroupVersionResource,
+	opts ...krt.CollectionOption,
+) (krt.Collection[*T], kclient.Informer[*unstructured.Unstructured]) {
 	gatewayClient := kclient.NewDelayedInformer[*unstructured.Unstructured](client, gvr, kubetypes.DynamicInformer, kclient.Filter{})
 	GatewayMapper := krt.WrapClient(gatewayClient, opts...)
 	return krt.NewCollection(GatewayMapper, func(krtctx krt.HandlerContext, i *unstructured.Unstructured) **T {
@@ -614,7 +567,7 @@ func setupCollectionDynamic[T any](ctx context.Context, client kube.Client, gvr 
 			return nil
 		}
 		return &out
-	})
+	}), gatewayClient
 }
 
 func applyStatusPlugins(
@@ -665,8 +618,8 @@ func (s *ProxySyncer) syncRouteStatus(ctx context.Context, rm reports.ReportMap)
 	}
 }
 
-// syncStatus updates the status of the Gateway CRs
-func (s *ProxySyncer) syncStatus(ctx context.Context, rm reports.ReportMap, gw *gwv1.Gateway) {
+// syncGatewayStatus updates the status of the Gateway CRs
+func (s *ProxySyncer) syncGatewayStatus(ctx context.Context, rm reports.ReportMap, gw *gwv1.Gateway) {
 	ctx = contextutils.WithLogger(ctx, "statusSyncer")
 	logger := contextutils.LoggerFrom(ctx)
 	stopwatch := statsutils.NewTranslatorStopWatch("GatewayStatusSyncer")
@@ -738,3 +691,67 @@ func isGatewayStatusEqual(objA, objB *gwv1.GatewayStatus) bool {
 func isHTTPRouteStatusEqual(objA, objB *gwv1.HTTPRouteStatus) bool {
 	return cmp.Equal(objA, objB, opts)
 }
+
+// RouteOptions := setupCollectionDynamic[sologatewayv1.RouteOption](
+// 	ctx,
+// 	s.istioClient,
+// 	sologatewayv1.SchemeGroupVersion.WithResource("routeoptions"),
+// 	krt.WithName("RouteOptions"),
+// )
+// VirtualHostOptions := setupCollectionDynamic[sologatewayv1.VirtualHostOption](
+// 	ctx,
+// 	s.istioClient,
+// 	sologatewayv1.SchemeGroupVersion.WithResource("virtualhostoptions"),
+// 	krt.WithName("VirtualHostOptions"),
+// )
+
+// type metaObjWithSpec interface {
+// 	metav1.Object
+// 	GetSpec() protoiface.MessageV1
+// }
+
+// type rtOptWrapper struct {
+// 	*sologatewayv1.RouteOption
+// }
+
+// func wrapRtOpts(in []*sologatewayv1.RouteOption) []*rtOptWrapper {
+// 	out := make([]*rtOptWrapper, 0, len(in))
+// 	for _, i := range in {
+// 		out = append(out, &rtOptWrapper{i})
+// 	}
+// 	return out
+// }
+
+// func (x *rtOptWrapper) GetSpec() protoiface.MessageV1 {
+// 	return &x.Spec
+// }
+
+// type vhostOptWrapper struct {
+// 	*sologatewayv1.VirtualHostOption
+// }
+
+// func wrapVhosts(in []*sologatewayv1.VirtualHostOption) []*vhostOptWrapper {
+// 	out := make([]*vhostOptWrapper, 0, len(in))
+// 	for _, i := range in {
+// 		out = append(out, &vhostOptWrapper{i})
+// 	}
+// 	return out
+// }
+
+// func (x *vhostOptWrapper) GetSpec() protoiface.MessageV1 {
+// 	return &x.Spec
+// }
+
+// func unwrapGlooKubeTypes[I metaObjWithSpec, O resources.Resource](in []I) []O {
+// 	out := make([]O, 0, len(in))
+// 	for _, i := range in {
+// 		o := proto.Clone(i.GetSpec()).(O)
+// 		m := &core.Metadata{
+// 			Name:      i.GetName(),
+// 			Namespace: i.GetNamespace(),
+// 		}
+// 		o.SetMetadata(m)
+// 		out = append(out, o)
+// 	}
+// 	return out
+// }
