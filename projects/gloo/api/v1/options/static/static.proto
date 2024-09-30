@@ -34,9 +34,10 @@ message UpstreamSpec {
     // defaults to "true".
     google.protobuf.BoolValue auto_sni_rewrite = 6;
 
-    // In mesh indicates that hosts references ServiceEntries, possibly the
-    // ServiceEntries derived from VirtualDestination, to route upstream
-    // traffic.
+    // To use Gloo Gateway as an ingress gateway in a service mesh, set to true.
+    // Then, set this static upstream's hosts to reference ServiceEntries,
+    // such as ServiceEntries derived from VirtualDestinations,
+    // to route upstream traffic to.
     bool in_mesh = 7;
 }
 
