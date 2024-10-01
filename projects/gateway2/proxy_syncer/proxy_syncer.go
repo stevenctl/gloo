@@ -314,10 +314,11 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	epClient := kclient.New[*corev1.Endpoints](s.istioClient)
 	KubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
 
-	GlooEndpoints := krt.NewManyCollection(FinalUpstreams, func(kctx krt.HandlerContext, us *upstream) []*glooEndpoint {
+	GlooEndpoints := krt.NewManyFromNothing(func(kctx krt.HandlerContext) []*glooEndpoint {
 		// ripped from: projects/gloo/pkg/plugins/kubernetes/eds.go#newEndpointsWatcher(...)
 		upstreamSpecs := make(map[*core.ResourceRef]*kubeplugin.UpstreamSpec)
-		for _, us := range FinalUpstreams.List() {
+		upstreams := krt.Fetch(kctx, FinalUpstreams)
+		for _, us := range upstreams {
 			kubeUpstream, ok := us.Upstream.GetUpstreamType().(*gloov1.Upstream_Kube)
 			// only care about kube upstreams
 			if !ok {
