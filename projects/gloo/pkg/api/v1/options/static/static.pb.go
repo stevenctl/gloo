@@ -106,13 +106,6 @@ func (x *UpstreamSpec) GetAutoSniRewrite() *wrapperspb.BoolValue {
 	return nil
 }
 
-func (x *UpstreamSpec) GetIsMesh() bool {
-	if x != nil {
-		return x.IsMesh
-	}
-	return false
-}
-
 // Represents a single instance of an upstream
 type Host struct {
 	state         protoimpl.MessageState
