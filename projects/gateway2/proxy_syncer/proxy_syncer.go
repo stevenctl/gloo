@@ -281,8 +281,8 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 		// TODO: not cloning, this is already a copy from the underlying cache, right?!
 		glooUs := &u.Spec
 		glooUs.Metadata = &core.Metadata{}
-		glooUs.Metadata.Name = u.GetName()
-		glooUs.Metadata.Namespace = u.GetNamespace()
+		glooUs.GetMetadata().Name = u.GetName()
+		glooUs.GetMetadata().Namespace = u.GetNamespace()
 		us := &upstream{glooUs}
 		return &us
 	}, krt.WithName("GlooUpstreams"))

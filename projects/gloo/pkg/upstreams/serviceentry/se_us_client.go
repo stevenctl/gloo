@@ -135,7 +135,7 @@ func ConvertUpstreams(se *networkingclient.ServiceEntry) []*v1.Upstream {
 	// - Location: MESH_INTERNAL/MESH_EXTERNAL. Decide whether to use mTLS
 	// - exportTo: we're not respecting this but we should
 	var out []*v1.Upstream
-	for _, port := range se.Spec.Ports {
+	for _, port := range se.Spec.GetPorts() {
 		labels := make(map[string]string, len(se.Labels))
 		for k, v := range se.Labels {
 			labels[k] = v
@@ -152,7 +152,7 @@ func ConvertUpstreams(se *networkingclient.ServiceEntry) []*v1.Upstream {
 			},
 		}
 
-		if se.Spec.WorkloadSelector != nil {
+		if se.Spec.GetWorkloadSelector() != nil {
 			us.UpstreamType = buildKube(se, port)
 		} else {
 			us.UpstreamType = buildStatic(se, port)
@@ -169,16 +169,16 @@ func buildKube(se *networkingclient.ServiceEntry, port *networking.ServicePort) 
 			ServiceName:      se.Name,
 			ServiceNamespace: se.Namespace,
 			ServicePort:      port.Number,
-			Selector:         se.Spec.WorkloadSelector.Labels,
+			Selector:         se.Spec.GetWorkloadSelector().GetLabels(),
 		},
 	}
 }
 
 func buildStatic(se *networkingclient.ServiceEntry, port *networking.ServicePort) *v1.Upstream_Static {
 	var hosts []*static.Host
-	for _, ep := range se.Spec.Endpoints {
+	for _, ep := range se.Spec.GetEndpoints() {
 		hosts = append(hosts, &static.Host{
-			Addr: ep.Address,
+			Addr: ep.GetAddress(),
 			Port: targetPort(port.Number, port.TargetPort, wePort(ep, port)),
 			// TODO do we want to set this for non-IP endpoints?
 			// SniAddr:             "",

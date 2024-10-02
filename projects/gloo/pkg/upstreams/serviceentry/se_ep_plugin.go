@@ -73,7 +73,7 @@ func buildWorkloadEntryEndpoint(
 	portName string,
 ) *v1.Endpoint {
 	port := svcPort
-	if wePort := we.Spec.Ports[portName]; wePort > 0 {
+	if wePort := we.Spec.GetPorts()[portName]; wePort > 0 {
 		port = wePort
 	} else if sePort := se.targetPorts[svcPort]; sePort > 0 {
 		port = sePort
@@ -86,7 +86,7 @@ func buildWorkloadEntryEndpoint(
 			Labels:      we.Labels,
 			Annotations: we.Annotations,
 		},
-		Address: we.Spec.Address,
+		Address: we.Spec.GetAddress(),
 		Port:    port,
 		// Hostname:    "",
 	}
@@ -207,19 +207,19 @@ func serviceEntriesWithUpstreams(
 	MeshUpstreamsIndex krt.Index[string, upstream],
 ) (krt.Collection[serviceEntryUpstreams], krt.Index[string, serviceEntryUpstreams]) {
 	upstreamServiceEntries := krt.NewCollection(ServiceEntries, func(ctx krt.HandlerContext, se *networkingclient.ServiceEntry) *serviceEntryUpstreams {
-		referencingUs := make(map[uint32][]upstream, len(se.Spec.Ports))
-		portMapping := make(map[uint32]uint32, len(se.Spec.Ports))
-		for _, host := range se.Spec.Hosts {
-			for _, port := range se.Spec.Ports {
-				key := net.JoinHostPort(host, strconv.Itoa(int(port.Number)))
+		referencingUs := make(map[uint32][]upstream, len(se.Spec.GetPorts()))
+		portMapping := make(map[uint32]uint32, len(se.Spec.GetPorts()))
+		for _, host := range se.Spec.GetHosts() {
+			for _, port := range se.Spec.GetPorts() {
+				key := net.JoinHostPort(host, strconv.Itoa(int(port.GetNumber())))
 				referencedBy := krt.Fetch(ctx, Upstreams, krt.FilterIndex(MeshUpstreamsIndex, key))
-				referencingUs[port.Number] = append(referencingUs[port.Number], referencedBy...)
+				referencingUs[port.GetNumber()] = append(referencingUs[port.GetNumber()], referencedBy...)
 
-				targetPort := port.Number
-				if port.TargetPort > 0 {
-					targetPort = port.TargetPort
+				targetPort := port.GetNumber()
+				if port.GetTargetPort() > 0 {
+					targetPort = port.GetTargetPort()
 				}
-				portMapping[port.Number] = targetPort
+				portMapping[port.GetNumber()] = targetPort
 			}
 		}
 		if len(referencingUs) == 0 {
@@ -252,7 +252,7 @@ func seInlineEndpoints(
 				ObjectMeta: metav1.ObjectMeta{
 					Name:      se.Name + "inline-" + strconv.Itoa(i),
 					Namespace: se.Namespace,
-					Labels:    we.Labels,
+					Labels:    we.GetLabels(),
 				},
 				// TODO lock copy...
 				Spec: *we,
@@ -291,7 +291,7 @@ func weEndpoints(
 	seNsIndex krt.Index[string, serviceEntryUpstreams],
 ) krt.Collection[glooEndpoint] {
 	return krt.NewManyCollection(WorkloadEntries, func(ctx krt.HandlerContext, we *networkingclient.WorkloadEntry) []glooEndpoint {
-		if we.Spec.Address == "" {
+		if we.Spec.GetAddress() == "" {
 			// TODO handle empty address WorkloadEntry for cross-network?
 			// I think we end up using the VIP outbound and zTunnel handles it.
 			return nil
@@ -359,7 +359,7 @@ func generateEndpointsForServiceEntry[T any](
 			endpointsByPort[svcPort] = endpoint
 		}
 		for _, us := range upstreams {
-			endpoint.Upstreams = append(endpoint.Upstreams, &core.ResourceRef{
+			endpoint.Upstreams = append(endpoint.GetUpstreams(), &core.ResourceRef{
 				Name:      us.GetMetadata().GetName(),
 				Namespace: us.GetMetadata().GetNamespace(),
 			})

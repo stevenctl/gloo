@@ -7,6 +7,9 @@
 package static
 
 import (
+	reflect "reflect"
+	sync "sync"
+
 	_ "github.com/envoyproxy/protoc-gen-validate/validate"
 	options "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options"
 	_ "github.com/solo-io/protoc-gen-ext/extproto"
@@ -44,6 +47,9 @@ type UpstreamSpec struct {
 	// If both this and host.sni_addr are set, host.sni_addr has priority.
 	// defaults to "true".
 	AutoSniRewrite *wrapperspb.BoolValue `protobuf:"bytes,6,opt,name=auto_sni_rewrite,json=autoSniRewrite,proto3" json:"auto_sni_rewrite,omitempty"`
+	// The hosts reference hosts defined in VirtualDestination or ServiceEntry
+	// resources to route to in-mesh endpoints.
+	IsMesh bool `protobuf:"varint,7,opt,name=is_mesh,json=isMesh,proto3" json:"is_mesh,omitempty"`
 }
 
 func (x *UpstreamSpec) Reset() {
@@ -104,6 +110,13 @@ func (x *UpstreamSpec) GetAutoSniRewrite() *wrapperspb.BoolValue {
 		return x.AutoSniRewrite
 	}
 	return nil
+}
+
+func (x *UpstreamSpec) GetIsMesh() bool {
+	if x != nil {
+		return x.IsMesh
+	}
+	return false
 }
 
 // Represents a single instance of an upstream
