@@ -9,8 +9,15 @@ import (
 	gwv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
-const NormalizedHTTPSTLSType = "HTTPS/TLS"
-const DefaultHostname = "*"
+const (
+	NormalizedHTTPSTLSType = "HTTPS/TLS"
+	DefaultHostname        = "*"
+
+	// IstioProxyProtocol indicates the gateway expects PROXY protocol
+	// to identify the source/target address.
+	// This protocol name is not formally defined in Istio but is used by gloo-waypoint.
+	IstioProxyProtocol = "istio.io/PROXY"
+)
 
 type portProtocol struct {
 	hostnames map[gwv1.Hostname]int
@@ -19,9 +26,11 @@ type portProtocol struct {
 	listeners []gwv1.Listener
 }
 
-type protocol = string
-type groupName = string
-type routeKind = string
+type (
+	protocol  = string
+	groupName = string
+	routeKind = string
+)
 
 func getSupportedProtocolsRoutes() map[protocol]map[groupName][]routeKind {
 	// we currently only support HTTPRoute on HTTP and HTTPS protocols
@@ -32,6 +41,11 @@ func getSupportedProtocolsRoutes() map[protocol]map[groupName][]routeKind {
 			},
 		},
 		string(gwv1.HTTPSProtocolType): {
+			gwv1.GroupName: []string{
+				wellknown.HTTPRouteKind,
+			},
+		},
+		IstioProxyProtocol: {
 			gwv1.GroupName: []string{
 				wellknown.HTTPRouteKind,
 			},
@@ -61,15 +75,17 @@ func validateSupportedRoutes(listeners []gwv1.Listener, reporter reports.Gateway
 		supportedRouteKindsForProtocol, ok := supportedProtocolToKinds[string(listener.Protocol)]
 		if !ok {
 			// todo: log?
+			println("stevenctl: no protocol ", listener.Protocol, "found for listener")
 			reporter.Listener(&listener).SetCondition(reports.ListenerCondition{
 				Type:   gwv1.ListenerConditionAccepted,
 				Status: metav1.ConditionFalse,
-				Reason: gwv1.ListenerReasonUnsupportedProtocol, //TODO: add message
+				Reason: gwv1.ListenerReasonUnsupportedProtocol, // TODO: add message
 			})
 			continue
 		}
 
 		if listener.AllowedRoutes == nil || len(listener.AllowedRoutes.Kinds) == 0 {
+			println("stevenctl: do default supportedRouteKinds for", listener.Protocol, "found for listener")
 			// default to whatever route kinds we support on this protocol
 			// TODO(Law): confirm this matches spec
 			rgks := buildDefaultRouteKindsForProtocol(supportedRouteKindsForProtocol)
@@ -77,6 +93,8 @@ func validateSupportedRoutes(listeners []gwv1.Listener, reporter reports.Gateway
 			validListeners = append(validListeners, listener)
 			continue
 		}
+
+		println("stevenctl: trying to find explicit kinds for", listener.Protocol)
 
 		foundSupportedRouteKinds := []gwv1.RouteGroupKind{}
 		foundInvalidRouteKinds := []gwv1.RouteGroupKind{}
@@ -125,7 +143,7 @@ func validateListeners(gw *gwv1.Gateway, reporter reports.GatewayReporter) []gwv
 		if existingListener, ok := portListeners[listener.Port]; ok {
 			existingListener.protocol[protocol] = true
 			existingListener.listeners = append(existingListener.listeners, listener)
-			//TODO(Law): handle validation that hostname empty for udp/tcp
+			// TODO(Law): handle validation that hostname empty for udp/tcp
 			if listener.Hostname != nil {
 				existingListener.hostnames[*listener.Hostname]++
 			} else {
