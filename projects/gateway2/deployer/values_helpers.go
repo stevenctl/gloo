@@ -1,6 +1,7 @@
 package deployer
 
 import (
+	"encoding/json"
 	"fmt"
 	"sort"
 	"strings"
@@ -82,6 +83,14 @@ func getServiceValues(svcConfig *v1alpha1.Service) *helmService {
 		ClusterIP:        svcConfig.GetClusterIP(),
 		ExtraAnnotations: svcConfig.GetExtraAnnotations(),
 		ExtraLabels:      svcConfig.GetExtraLabels(),
+	}
+}
+
+// Convert service account values from GatewayParameters into helm values to be used by the deployer.
+func getServiceAccountValues(svcAccountConfig *v1alpha1.ServiceAccount) *helmServiceAccount {
+	return &helmServiceAccount{
+		ExtraAnnotations: svcAccountConfig.GetExtraAnnotations(),
+		ExtraLabels:      svcAccountConfig.GetExtraLabels(),
 	}
 }
 
@@ -190,9 +199,20 @@ func ComponentLogLevelsToString(vals map[string]string) (string, error) {
 	return strings.Join(parts, ","), nil
 }
 
-func getAIExtensionValues(config *v1alpha1.AiExtension) *helmAIExtension {
+func getAIExtensionValues(config *v1alpha1.AiExtension) (*helmAIExtension, error) {
 	if config == nil {
-		return nil
+		return nil, nil
+	}
+
+	// If we don't do this check, a byte array containing the characters "null" will be rendered
+	// This will not be marshallable by the component so instead we render nothing.
+	var byt []byte
+	if config.GetStats() != nil {
+		var err error
+		byt, err = json.Marshal(config.GetStats())
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return &helmAIExtension{
@@ -202,5 +222,6 @@ func getAIExtensionValues(config *v1alpha1.AiExtension) *helmAIExtension {
 		Resources:       config.GetResources(),
 		Env:             config.GetEnv(),
 		Ports:           config.GetPorts(),
-	}
+		Stats:           byt,
+	}, nil
 }

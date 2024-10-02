@@ -170,6 +170,8 @@ spec:
                           additionalProperties:
                             type: string
                           type: object
+                        skipMetadataValidation:
+                          type: boolean
                       type: object
                     basicAuth:
                       properties:
@@ -648,6 +650,11 @@ spec:
                                 methodType:
                                   type: string
                                   x-kubernetes-int-or-string: true
+                              type: object
+                            frontChannelLogout:
+                              properties:
+                                path:
+                                  type: string
                               type: object
                             headers:
                               properties:

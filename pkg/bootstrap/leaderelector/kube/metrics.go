@@ -12,7 +12,6 @@ var leaderGauge = k8smetrics.NewGaugeVec(&k8smetrics.GaugeOpts{
 	Help: "Gauge of if the reporting system is owner of the relevant lease, 0 indicates candidate, 1 indicates leader. 'name' is the string used to identify the lease. Please make sure to group by name.",
 }, []string{"name"})
 
-
 var slowpathCounter = k8smetrics.NewCounterVec(&k8smetrics.CounterOpts{
 	Name: "leader_election_slowpath_exercised",
 	Help: "Counter of occurrences where the slow path for Kubernetes leader election was used.",
@@ -25,7 +24,7 @@ func init() {
 type prometheusMetricsProvider struct{}
 
 func (prometheusMetricsProvider) NewLeaderMetric() k8sleaderelection.LeaderMetric {
-	return &switchAdapter{gauge: leaderGauge, slowpath: slowpathCounter}
+	return &switchAdapter{gauge: leaderGauge}
 }
 
 type switchAdapter struct {
@@ -43,4 +42,8 @@ func (s *switchAdapter) On(name string) {
 
 func (s *switchAdapter) Off(name string) {
 	s.gauge.WithLabelValues(name).Set(0.0)
+}
+
+func (s *switchAdapter) SlowpathExercised(name string) {
+	// noop
 }

@@ -534,6 +534,9 @@ spec:
                                   type: object
                               type: object
                             type: object
+                          validationPolicy:
+                            type: string
+                            x-kubernetes-int-or-string: true
                         type: object
                       jwtStaged:
                         properties:
@@ -613,6 +616,9 @@ spec:
                                       type: object
                                   type: object
                                 type: object
+                              validationPolicy:
+                                type: string
+                                x-kubernetes-int-or-string: true
                             type: object
                           beforeExtAuth:
                             properties:
@@ -690,6 +696,9 @@ spec:
                                       type: object
                                   type: object
                                 type: object
+                              validationPolicy:
+                                type: string
+                                x-kubernetes-int-or-string: true
                             type: object
                         type: object
                       rateLimitConfigs:
@@ -1423,6 +1432,12 @@ spec:
                                 nullable: true
                                 type: integer
                             type: object
+                          retriableStatusCodes:
+                            items:
+                              maximum: 4294967295
+                              minimum: 0
+                              type: integer
+                            type: array
                           retryBackOff:
                             properties:
                               baseInterval:
@@ -3149,10 +3164,6 @@ spec:
                           properties:
                             ai:
                               properties:
-                                backupModels:
-                                  items:
-                                    type: string
-                                  type: array
                                 defaults:
                                   items:
                                     properties:
@@ -3223,6 +3234,27 @@ spec:
                                       type: object
                                     embedding:
                                       properties:
+                                        azureOpenai:
+                                          properties:
+                                            apiVersion:
+                                              type: string
+                                            authToken:
+                                              properties:
+                                                inline:
+                                                  type: string
+                                                secretRef:
+                                                  properties:
+                                                    name:
+                                                      type: string
+                                                    namespace:
+                                                      type: string
+                                                  type: object
+                                              type: object
+                                            deploymentName:
+                                              type: string
+                                            endpoint:
+                                              type: string
+                                          type: object
                                         openai:
                                           properties:
                                             authToken:
@@ -3242,6 +3274,9 @@ spec:
                                     promptTemplate:
                                       type: string
                                   type: object
+                                routeType:
+                                  type: string
+                                  x-kubernetes-int-or-string: true
                                 semanticCache:
                                   properties:
                                     datastore:
@@ -3253,9 +3288,45 @@ spec:
                                             scoreThreshold:
                                               type: number
                                           type: object
+                                        weaviate:
+                                          properties:
+                                            grpcPort:
+                                              maximum: 4294967295
+                                              minimum: 0
+                                              type: integer
+                                            host:
+                                              type: string
+                                            httpPort:
+                                              maximum: 4294967295
+                                              minimum: 0
+                                              type: integer
+                                            insecure:
+                                              type: boolean
+                                          type: object
                                       type: object
                                     embedding:
                                       properties:
+                                        azureOpenai:
+                                          properties:
+                                            apiVersion:
+                                              type: string
+                                            authToken:
+                                              properties:
+                                                inline:
+                                                  type: string
+                                                secretRef:
+                                                  properties:
+                                                    name:
+                                                      type: string
+                                                    namespace:
+                                                      type: string
+                                                  type: object
+                                              type: object
+                                            deploymentName:
+                                              type: string
+                                            endpoint:
+                                              type: string
+                                          type: object
                                         openai:
                                           properties:
                                             authToken:
@@ -3742,6 +3813,9 @@ spec:
                                             type: object
                                         type: object
                                       type: object
+                                    validationPolicy:
+                                      type: string
+                                      x-kubernetes-int-or-string: true
                                   type: object
                                 beforeExtAuth:
                                   properties:
@@ -3819,6 +3893,9 @@ spec:
                                             type: object
                                         type: object
                                       type: object
+                                    validationPolicy:
+                                      type: string
+                                      x-kubernetes-int-or-string: true
                                   type: object
                               type: object
                             jwtStaged:
@@ -4624,6 +4701,12 @@ spec:
                                       nullable: true
                                       type: integer
                                   type: object
+                                retriableStatusCodes:
+                                  items:
+                                    maximum: 4294967295
+                                    minimum: 0
+                                    type: integer
+                                  type: array
                                 retryBackOff:
                                   properties:
                                     baseInterval:
