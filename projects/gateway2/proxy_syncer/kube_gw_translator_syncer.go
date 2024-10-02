@@ -5,11 +5,9 @@ import (
 
 	"github.com/solo-io/go-utils/contextutils"
 	"github.com/solo-io/go-utils/hashutils"
-	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/types"
 	"github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 	"github.com/solo-io/solo-kit/pkg/api/v2/reporter"
 
-	"github.com/solo-io/gloo/projects/gateway2/translator/translatorutils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	v1snap "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/gloosnapshot"
@@ -21,8 +19,6 @@ import (
 	"go.opencensus.io/stats"
 	"go.opencensus.io/stats/view"
 	"go.opencensus.io/tag"
-	"go.opencensus.io/trace"
-	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -49,69 +45,38 @@ func measureResource(ctx context.Context, resource string, length int) {
 	}
 }
 
-func (s *ProxyTranslator) glooSync(ctx context.Context, snap *v1snap.ApiSnapshot) []translatorutils.ProxyWithReports {
-	// Reports used to aggregate results from xds and extension translation.
-	// Will contain reports only `Gloo` components (i.e. Proxies, Upstreams, AuthConfigs, etc.)
-	reports := make(reporter.ResourceReports)
-
-	contextutils.LoggerFrom(ctx).Info("before gw sync envoy")
-	// Execute the EnvoySyncer
-	// This will update the xDS SnapshotCache for each entry that corresponds to a Proxy in the API Snapshot
-	// TODO: need to pass in ggv2 proxies now
-	proxyReports := s.syncEnvoy(ctx, snap, reports)
-	contextutils.LoggerFrom(ctx).Info("after gw sync envoy")
-
-	// Execute the SyncerExtensions
-	// Each of these are responsible for updating a single entry in the SnapshotCache
-	s.syncExtensions(ctx, snap, reports)
-
-	// reports now has been merged from the envoy and extension translation/syncs
-	// it also contains reports for all Gloo resources (Upstreams, Proxies, AuthConfigs, RLCs, etc.)
-	// so let's filter out non-Proxy reports
-	// TODO: we actually don't want to do this, we do need to report status
-	filteredReports := reports.FilterByKind("Proxy")
-
-	// build object used by status plugins
-	var proxiesWithReports []translatorutils.ProxyWithReports
-	for i, proxy := range snap.Proxies {
-		proxy := proxy // still need pike?
-
-		// build ResourceReports struct containing only this Proxy
-		r := make(reporter.ResourceReports)
-		r[proxy] = filteredReports[proxy]
-
-		proxiesWithReports = append(proxiesWithReports, translatorutils.ProxyWithReports{
-			Proxy: proxy,
-			Reports: translatorutils.TranslationReports{
-				ProxyReport:     proxyReports[i],
-				ResourceReports: r,
-			},
-		})
-	}
-
-	// TODO(Law): confirm not needed; metrics can be derived from k8s conditions, may be needed for Policy GE-style status?
-	// // Update resource status metrics
-	// for resource, report := range reports {
-	// 	status := s.reporter.StatusFromReport(report, nil)
-	// 	s.statusMetrics.SetResourceStatus(ctx, resource, status)
-	// }
-
-	// need to write proxy reports
-
-	return proxiesWithReports
-}
-
+// buildXdsSnapshot will translate from a gloov1.Proxy to xdsSnapshot using the supplied api snapshot.
+// This method also merges in reports from extension syncing. Note that extensions are NOT actually synced,
+// as use a NoOp snapshot when running the extension syncers; we only care about getting extensions errors and warnings
+// related to the Proxy being processed.
+// The actual syncing of the extension server's AND the status of the extension resources is handled by the legacy syncer.
 func (s *ProxyTranslator) buildXdsSnapshot(
 	ctx context.Context,
 	proxy *v1.Proxy,
 	snap *v1snap.ApiSnapshot,
 ) (cache.Snapshot, reporter.ResourceReports, *validation.ProxyReport) {
+	ctx = contextutils.WithLogger(ctx, "kube-gateway-xds-snapshot")
+	logger := contextutils.LoggerFrom(ctx)
+	snapHash := hashutils.MustHash(snap)
+	metaKey := xds.SnapshotCacheKey(proxy)
+	logger.Infof("build xds snapshot for proxy %v (%v upstreams, %v endpoints, %v secrets, %v artifacts, %v auth configs, %v rate limit configs)",
+		metaKey, len(snap.Upstreams), len(snap.Endpoints), len(snap.Secrets), len(snap.Artifacts), len(snap.AuthConfigs), len(snap.Ratelimitconfigs))
+	defer logger.Infof("end sync %v", snapHash)
 
 	proxyCtx := ctx
-	metaKey := xds.SnapshotCacheKey(proxy)
 	if ctxWithTags, err := tag.New(proxyCtx, tag.Insert(syncerstats.ProxyNameKey, metaKey)); err == nil {
 		proxyCtx = ctxWithTags
 	}
+
+	// Reports used to aggregate results from xds and extension translation.
+	// Will contain reports only `Gloo` components (i.e. Proxies, Upstreams, AuthConfigs, etc.)
+	allReports := make(reporter.ResourceReports)
+
+	// we need to track and report upstreams, even though this is possibly duplicate work with the latest syncer
+	// the reason for this is because we need to set Upstream status in lieu of an edge proxy being translated
+	// accept upstreams in snap so we can report accepted status (without this we wouldn't know to report on positive)
+	allReports.Accept(snap.Upstreams.AsInputResources()...)
+	allReports.Accept(snap.UpstreamGroups.AsInputResources()...)
 
 	params := plugins.Params{
 		Ctx:      proxyCtx,
@@ -126,37 +91,27 @@ func (s *ProxyTranslator) buildXdsSnapshot(
 	for _, messages := range params.Messages {
 		reports.AddMessages(proxy, messages...)
 	}
-	return xdsSnapshot, reports, proxyReport
+
+	allReports.Merge(reports)
+
+	s.syncExtensions(ctx, snap, allReports)
+
+	return xdsSnapshot, allReports, proxyReport
 }
 
 func (s *ProxyTranslator) syncXdsAndStatus(
 	ctx context.Context,
-	xdsSnapshot cache.Snapshot,
+	snap *xds.EnvoySnapshot,
 	proxyKey string,
 	reports reporter.ResourceReports,
 ) error {
-	// if the snapshot is not consistent, make it so
-	xdsSnapshot.MakeConsistent()
-	s.xdsCache.SetSnapshot(proxyKey, xdsSnapshot)
-	return s.syncStatus(ctx, reports)
-}
-
-// syncEnvoy will translate, sanitize, and set the xds snapshot for each of the proxies in the provided api snapshot.
-// Reports from translation attempts on every Proxy will be merged into allReports.
-func (s *ProxyTranslator) syncEnvoy(
-	ctx context.Context,
-	snap *v1snap.ApiSnapshot,
-	allReports reporter.ResourceReports,
-) []*validation.ProxyReport {
-	ctx, span := trace.StartSpan(ctx, "gloo.kube.syncer.Sync")
-	defer span.End()
-
-	ctx = contextutils.WithLogger(ctx, "kube-gateway-envoy-translatorSyncer")
+	ctx = contextutils.WithLogger(ctx, "kube-gateway-xds-syncer")
 	logger := contextutils.LoggerFrom(ctx)
-	snapHash := hashutils.MustHash(snap)
-	logger.Infof("begin kube gw sync %v (%v proxies, %v upstreams, %v endpoints, %v secrets, %v artifacts, %v auth configs, %v rate limit configs, %v graphql apis)", snapHash,
-		len(snap.Proxies), len(snap.Upstreams), len(snap.Endpoints), len(snap.Secrets), len(snap.Artifacts), len(snap.AuthConfigs), len(snap.Ratelimitconfigs), len(snap.GraphqlApis))
-	defer logger.Infof("end sync %v", snapHash)
+	// snapHash := hashutils.MustHash(snap)
+	// TODO: add versions?
+	logger.Infof("begin kube gw sync for proxy %v (%v listeners, %v clusters, %v routes, %v endpoints)",
+		proxyKey, len(snap.Listeners.Items), len(snap.Clusters.Items), len(snap.Routes.Items), len(snap.Endpoints.Items))
+	// defer logger.Infof("end sync %v", snapHash)
 
 	// stringifying the snapshot may be an expensive operation, so we'd like to avoid building the large
 	// string if we're not even going to log it anyway
@@ -164,71 +119,13 @@ func (s *ProxyTranslator) syncEnvoy(
 		// logger.Debug(syncutil.StringifySnapshot(snap))
 	}
 
-	allReports.Accept(snap.Proxies.AsInputResources()...)
-	// accept Upstream[Group]s as they may be reported on during xds translation, but we will drop them.
-	// the main GE translator_syncer will manage them, it is not our responsibility
-	allReports.Accept(snap.Upstreams.AsInputResources()...)
-	allReports.Accept(snap.UpstreamGroups.AsInputResources()...)
+	// if the snapshot is not consistent, make it so
+	snap.MakeConsistent()
+	s.xdsCache.SetSnapshot(proxyKey, snap)
 
-	// parallel slice to snap.Proxies containing corresponding proxyReport to translation
-	var proxyValidationReports []*validation.ProxyReport
-	for _, proxy := range snap.Proxies {
-		proxyCtx := ctx
-		metaKey := xds.SnapshotCacheKey(proxy)
-		if ctxWithTags, err := tag.New(proxyCtx, tag.Insert(syncerstats.ProxyNameKey, metaKey)); err == nil {
-			proxyCtx = ctxWithTags
-		}
-
-		params := plugins.Params{
-			Ctx:      proxyCtx,
-			Settings: s.settings,
-			Snapshot: snap,
-			Messages: map[*core.ResourceRef][]string{},
-		}
-
-		xdsSnapshot, reports, proxyReport := s.translator.Translate(params, proxy)
-		proxyValidationReports = append(proxyValidationReports, proxyReport)
-
-		// Messages are aggregated during translation, and need to be added to reports
-		for _, messages := range params.Messages {
-			reports.AddMessages(proxy, messages...)
-		}
-
-		if validateErr := reports.ValidateStrict(); validateErr != nil {
-			logger.Warnw("Proxy had invalid config", zap.Any("proxy", proxy.GetMetadata().Ref()), zap.Error(validateErr))
-		}
-
-		allReports.Merge(reports)
-
-		// if the snapshot is not consistent, make it so
-		xdsSnapshot.MakeConsistent()
-		key := xds.SnapshotCacheKey(proxy)
-		s.xdsCache.SetSnapshot(key, xdsSnapshot)
-
-		// Record some metrics
-		clustersLen := len(xdsSnapshot.GetResources(types.ClusterTypeV3).Items)
-		listenersLen := len(xdsSnapshot.GetResources(types.ListenerTypeV3).Items)
-		routesLen := len(xdsSnapshot.GetResources(types.RouteTypeV3).Items)
-		endpointsLen := len(xdsSnapshot.GetResources(types.EndpointTypeV3).Items)
-
-		measureResource(proxyCtx, "clusters", clustersLen)
-		measureResource(proxyCtx, "listeners", listenersLen)
-		measureResource(proxyCtx, "routes", routesLen)
-		measureResource(proxyCtx, "endpoints", endpointsLen)
-
-		logger.Infow("Setting xDS Snapshot", "key", key,
-			"clusters", clustersLen,
-			"listeners", listenersLen,
-			"routes", routesLen,
-			"endpoints", endpointsLen)
-
-		logger.Debugf("Full snapshot for proxy %v: %+v", proxy.GetMetadata().GetName(), xdsSnapshot)
-	}
-
-	// TODO: Need to move this out; should group with status syncing for extensions as well
-	s.syncStatus(ctx, allReports)
-	return proxyValidationReports
+	return s.syncStatus(ctx, reports)
 }
+
 func (s *ProxyTranslator) syncStatus(ctx context.Context, reports reporter.ResourceReports) error {
 	// leftover from translator_syncer's statusSyncer
 	// analyze our plan for concurrency, data ownership, do we need locks, etc.?
@@ -252,7 +149,8 @@ func (s *ProxyTranslator) syncStatus(ctx context.Context, reports reporter.Resou
 }
 
 // syncExtensions executes each of the TranslatorSyncerExtensions
-// These are responsible for updating xDS cache entries
+// we do not actually set the xds cache for these extensions here, we only aggregate the reports
+// from a NoOp sync into the provided reports
 func (s *ProxyTranslator) syncExtensions(
 	ctx context.Context,
 	snap *v1snap.ApiSnapshot,

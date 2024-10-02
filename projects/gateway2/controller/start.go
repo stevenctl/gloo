@@ -157,6 +157,9 @@ func Start(ctx context.Context, cfg StartConfig) error {
 //   |
 //    --> Listener (xds)
 
+// RouteOptions -> (fetch Gateways from targetRef) -> empty
+// krt.NewCollection(RouteOptions)
+
 // this theoretically should work, however there's no easy way to do a watch via dynamic client that would return the typed objects
 // we need. we could use a separate client than the ClientGetter, such as:
 // - a typed client

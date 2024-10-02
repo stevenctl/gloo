@@ -259,34 +259,25 @@ func (us *upstream) Equals(in *upstream) bool {
 	return proto.Equal(us, in)
 }
 
-type fromKrtSnap struct {
-	cfgMaps   []*corev1.ConfigMap
-	endpoints []*glooEndpoint
-	// rtOpts    []*sologatewayv1.RouteOption
-	secrets   []*corev1.Secret
-	upstreams []*upstream
-	// vhostOpts []*sologatewayv1.VirtualHostOption
-}
-
 func (s *ProxySyncer) Start(ctx context.Context) error {
 	ctx = contextutils.WithLogger(ctx, "k8s-gw-syncer")
-
-	// create krt collections needed for building ApiSnapshot
-	// TODO: handle cfgmap noisiness:
+	// TODO: handle cfgmap noisiness?
 	// https://github.com/solo-io/gloo/blob/main/projects/gloo/pkg/api/converters/kube/artifact_converter.go#L31
 	configMapClient := kclient.New[*corev1.ConfigMap](s.istioClient)
-	ConfigMaps := krt.WrapClient(configMapClient, krt.WithName("ConfigMaps"))
+	configMaps := krt.WrapClient(configMapClient, krt.WithName("ConfigMaps"))
 
 	secretClient := kclient.New[*corev1.Secret](s.istioClient)
 	secrets := krt.WrapClient(secretClient, krt.WithName("Secrets"))
 
-	KubeUpstreams, kubeUsClient := setupCollectionDynamic[glookubev1.Upstream](
+	kubeUpstreams, kubeUsClient := setupCollectionDynamic[glookubev1.Upstream](
 		ctx,
 		s.istioClient,
 		glookubev1.SchemeGroupVersion.WithResource("upstreams"),
-		krt.WithName("Upstreams"),
+		krt.WithName("KubeUpstreams"),
 	)
-	GlooUpstreams := krt.NewCollection(KubeUpstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) **upstream {
+
+	// helper collection to map from the kube Upstream type to the gloov1.Upstream wrapper
+	glooUpstreams := krt.NewCollection(kubeUpstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) **upstream {
 		// TODO: not cloning, this is already a copy from the underlying cache, right?!
 		glooUs := &u.Spec
 		glooUs.Metadata = &core.Metadata{}
@@ -294,57 +285,30 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 		glooUs.Metadata.Namespace = u.GetNamespace()
 		us := &upstream{glooUs}
 		return &us
-	}, krt.WithName("InMemoryUpstreams"))
+	}, krt.WithName("GlooUpstreams"))
 
 	serviceClient := kclient.New[*corev1.Service](s.istioClient)
-	Services := krt.WrapClient(serviceClient, krt.WithName("Services"))
-	InMemUpstreams := krt.NewManyCollection(Services, func(kctx krt.HandlerContext, svc *corev1.Service) []*upstream {
+	services := krt.WrapClient(serviceClient, krt.WithName("Services"))
+
+	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []*upstream {
 		uss := []*upstream{}
 		for _, port := range svc.Spec.Ports {
 			us := kubeupstreams.ServiceToUpstream(ctx, svc, port)
 			uss = append(uss, &upstream{us})
 		}
 		return uss
-	})
-	// TODO: get upstream collections from extensions
-	FinalUpstreams := krt.JoinCollection([]krt.Collection[*upstream]{GlooUpstreams, InMemUpstreams})
+	}, krt.WithName("InMemoryUpstreams"))
+
+	finalUpstreams := krt.JoinCollection([]krt.Collection[*upstream]{glooUpstreams, inMemUpstreams})
 
 	podClient := kclient.New[*corev1.Pod](s.istioClient)
-	Pods := krt.WrapClient(podClient, krt.WithName("Pods"))
-	epClient := kclient.New[*corev1.Endpoints](s.istioClient)
-	KubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
+	pods := krt.WrapClient(podClient, krt.WithName("Pods"))
 
-	GlooEndpoints := krt.NewManyFromNothing(func(kctx krt.HandlerContext) []*glooEndpoint {
-		// ripped from: projects/gloo/pkg/plugins/kubernetes/eds.go#newEndpointsWatcher(...)
-		upstreamSpecs := make(map[*core.ResourceRef]*kubeplugin.UpstreamSpec)
-		upstreams := krt.Fetch(kctx, FinalUpstreams)
-		for _, us := range upstreams {
-			kubeUpstream, ok := us.Upstream.GetUpstreamType().(*gloov1.Upstream_Kube)
-			// only care about kube upstreams
-			if !ok {
-				continue
-			}
-			upstreamSpecs[us.GetMetadata().Ref()] = kubeUpstream.Kube
-		}
-		keps := krt.Fetch(kctx, KubeEndpoints)
-		svcs := krt.Fetch(kctx, Services)
-		pods := krt.Fetch(kctx, Pods)
-		endpoints, warns, errs := kubernetes.FilterEndpoints(
-			ctx,
-			"gloo-system",
-			keps,
-			svcs,
-			pods,
-			upstreamSpecs,
-		)
-		if len(warns) > 0 || len(errs) > 0 {
-			// do something
-		}
-		out := make([]*glooEndpoint, 0, len(endpoints))
-		for _, gep := range endpoints {
-			out = append(out, &glooEndpoint{gep})
-		}
-		return out
+	epClient := kclient.New[*corev1.Endpoints](s.istioClient)
+	kubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
+
+	glooEndpoints := krt.NewManyFromNothing(func(kctx krt.HandlerContext) []*glooEndpoint {
+		return buildEndpoints(ctx, kctx, finalUpstreams, kubeEndpoints, services, pods)
 	}, krt.WithName("GlooEndpoints"))
 
 	kubeGateways, kubeGwClient := setupCollectionDynamic[gwv1.Gateway](
@@ -353,9 +317,6 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 		istiogvr.KubernetesGateway_v1,
 		krt.WithName("KubeGateways"),
 	)
-
-	// RouteOptions -> (fetch Gateways from targetRef) -> empty
-	// krt.NewCollection(RouteOptions)
 
 	// TODO: figure out the startSynced stuff
 	proxyTrigger := krt.NewRecomputeTrigger(true)
@@ -367,15 +328,15 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	})
 
 	xdsSnapshots := krt.NewCollection(glooProxies, func(kctx krt.HandlerContext, proxy *glooProxy) **xdsSnapWrapper {
-		krtSnap := &fromKrtSnap{
-			cfgMaps:   krt.Fetch(kctx, ConfigMaps),
-			endpoints: krt.Fetch(kctx, GlooEndpoints),
-			// rtOpts:    krt.Fetch(kctx, RouteOptions),
-			secrets:   krt.Fetch(kctx, secrets),
-			upstreams: krt.Fetch(kctx, FinalUpstreams),
-			// vhostOpts: krt.Fetch(kctx, VirtualHostOptions),
-		}
-		xdsSnap := s.buildXdsSnapshot(ctx, proxy, krtSnap)
+		xdsSnap := s.buildXdsSnapshot(
+			ctx,
+			kctx,
+			proxy,
+			configMaps,
+			glooEndpoints,
+			secrets,
+			finalUpstreams,
+		)
 		return &xdsSnap
 	})
 
@@ -425,6 +386,46 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	}
 }
 
+// ripped from: projects/gloo/pkg/plugins/kubernetes/eds.go#newEndpointsWatcher(...)
+func buildEndpoints(
+	ctx context.Context,
+	kctx krt.HandlerContext,
+	FinalUpstreams krt.Collection[*upstream],
+	KubeEndpoints krt.Collection[*corev1.Endpoints],
+	Services krt.Collection[*corev1.Service],
+	Pods krt.Collection[*corev1.Pod],
+) []*glooEndpoint {
+	upstreamSpecs := make(map[*core.ResourceRef]*kubeplugin.UpstreamSpec)
+	upstreams := krt.Fetch(kctx, FinalUpstreams)
+	for _, us := range upstreams {
+		kubeUpstream, ok := us.Upstream.GetUpstreamType().(*gloov1.Upstream_Kube)
+		if !ok {
+			continue // only care about kube upstreams
+		}
+		upstreamSpecs[us.GetMetadata().Ref()] = kubeUpstream.Kube
+	}
+	keps := krt.Fetch(kctx, KubeEndpoints)
+	svcs := krt.Fetch(kctx, Services)
+	pods := krt.Fetch(kctx, Pods)
+	endpoints, warns, errs := kubernetes.FilterEndpoints(
+		ctx,
+		"gloo-system",
+		keps,
+		svcs,
+		pods,
+		upstreamSpecs,
+	)
+	if len(warns) > 0 || len(errs) > 0 {
+		// FIXME
+	}
+	out := make([]*glooEndpoint, 0, len(endpoints))
+	for _, gep := range endpoints {
+		out = append(out, &glooEndpoint{gep})
+	}
+	return out
+}
+
+// buildProxy performs translation of a kube Gateway -> gloov1.Proxy (really a wrapper type)
 func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooProxy {
 	stopwatch := statsutils.NewTranslatorStopWatch("ProxySyncer")
 	stopwatch.Start()
@@ -458,7 +459,7 @@ func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooPro
 		TranslatedGateways: translatedGateways,
 	})
 
-	// reconcile proxy for extensions
+	// reconcile proxy via legacy in-memory Proxy client so legacy syncer can handle extension syncing
 	s.reconcileProxies(ctx, proxies)
 
 	// sync gateway api resource status
@@ -471,13 +472,25 @@ func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooPro
 	}
 }
 
-func (s *ProxySyncer) buildXdsSnapshot(ctx context.Context, proxy *glooProxy, k *fromKrtSnap) *xdsSnapWrapper {
+func (s *ProxySyncer) buildXdsSnapshot(
+	ctx context.Context,
+	kctx krt.HandlerContext,
+	proxy *glooProxy,
+	kcm krt.Collection[*corev1.ConfigMap],
+	kep krt.Collection[*glooEndpoint],
+	ks krt.Collection[*corev1.Secret],
+	kus krt.Collection[*upstream],
+) *xdsSnapWrapper {
+	cfgmaps := krt.Fetch(kctx, kcm)
+	endpoints := krt.Fetch(kctx, kep)
+	secrets := krt.Fetch(kctx, ks)
+	upstreams := krt.Fetch(kctx, kus)
+
 	latestSnap := gloosnapshot.ApiSnapshot{}
 	latestSnap.Proxies = gloov1.ProxyList{proxy.proxy}
 
-	krtCfgMaps := k.cfgMaps
-	as := make([]*gloov1.Artifact, 0, len(krtCfgMaps))
-	for _, u := range krtCfgMaps {
+	as := make([]*gloov1.Artifact, 0, len(cfgmaps))
+	for _, u := range cfgmaps {
 		a := kubeconverters.KubeConfigMapToArtifact(u)
 		as = append(as, a)
 	}
@@ -487,8 +500,8 @@ func (s *ProxySyncer) buildXdsSnapshot(ctx context.Context, proxy *glooProxy, k 
 	if !ok {
 		// something is wrong
 	}
-	gs := make([]*gloov1.Secret, 0, len(k.secrets))
-	for _, i := range k.secrets {
+	gs := make([]*gloov1.Secret, 0, len(secrets))
+	for _, i := range secrets {
 		secret, err := kubeconverters.GlooSecretConverterChain.FromKubeSecret(ctx, secretResourceClient, i)
 		if err != nil {
 			// do something
@@ -504,23 +517,22 @@ func (s *ProxySyncer) buildXdsSnapshot(ctx context.Context, proxy *glooProxy, k 
 	}
 	latestSnap.Secrets = gs
 
-	kus := k.upstreams
-	upstreams := make([]*gloov1.Upstream, 0, len(kus))
-	for _, u := range kus {
-		upstreams = append(upstreams, u.Upstream)
+	gupstreams := make([]*gloov1.Upstream, 0, len(upstreams))
+	for _, u := range upstreams {
+		gupstreams = append(gupstreams, u.Upstream)
 	}
-	latestSnap.Upstreams = upstreams
+	latestSnap.Upstreams = gupstreams
 
-	geps := k.endpoints
+	geps := endpoints
 	eps := UnwrapEps(geps)
 	latestSnap.Endpoints = eps
 
 	xdsSnapshot, reports, proxyReport := s.proxyTranslator.buildXdsSnapshot(ctx, proxy.proxy, &latestSnap)
 	// TODO(Law): now we not able to merge reports after translation!
-	filteredReports := reports.FilterByKind("Proxy")
 
 	// build ResourceReports struct containing only this Proxy
 	r := make(reporter.ResourceReports)
+	filteredReports := reports.FilterByKind("Proxy")
 	r[proxy.proxy] = filteredReports[proxy.proxy]
 
 	// build object used by status plugins
