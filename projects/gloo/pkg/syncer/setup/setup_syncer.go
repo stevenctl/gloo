@@ -11,10 +11,7 @@ import (
 	"strings"
 	"time"
 
-<<<<<<< HEAD
 	"github.com/solo-io/gloo/pkg/utils/settingsutil"
-=======
->>>>>>> parent of b960afcb5 (allow extensions to provide custom Upstreams)
 	"github.com/solo-io/gloo/pkg/utils/statsutils/metrics"
 	"github.com/solo-io/gloo/projects/gloo/pkg/servers/iosnapshot"
 
