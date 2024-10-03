@@ -43,7 +43,9 @@ type Translator interface {
 	) (envoycache.Snapshot, reporter.ResourceReports, *validationapi.ProxyReport)
 }
 
-var _ Translator = new(translatorInstance)
+var (
+	_ Translator = new(translatorInstance)
+)
 
 // translatorInstance is the implementation for a Translator used during Gloo translation
 type translatorInstance struct {
