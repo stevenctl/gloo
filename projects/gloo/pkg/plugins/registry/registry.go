@@ -54,8 +54,6 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/tunneling"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/upstreamconn"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/virtualhost"
-
-	// "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/serviceentry"
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/go-utils/contextutils"
 )
