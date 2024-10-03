@@ -110,7 +110,6 @@ func Plugins(opts bootstrap.Opts) []plugins.Plugin {
 		deprecated_cipher_passthrough.NewPlugin(),
 		local_ratelimit.NewPlugin(),
 		istio_automtls.NewPlugin(opts.GlooGateway.IstioValues.SidecarOnGatewayEnabled),
-		// serviceentry.NewPlugin(),
 	)
 
 	if opts.KubeClient != nil {
