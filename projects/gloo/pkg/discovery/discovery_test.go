@@ -22,6 +22,7 @@ import (
 )
 
 var _ = Describe("Discovery", func() {
+
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc

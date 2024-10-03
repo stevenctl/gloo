@@ -23,6 +23,7 @@ import (
 )
 
 var _ = Describe("Hybrid Upstream Client", func() {
+
 	var (
 		ctx    context.Context
 		cancel context.CancelFunc
@@ -91,7 +92,6 @@ var _ = Describe("Hybrid Upstream Client", func() {
 			baseUsClient,
 			svcClient,
 			consul.NewConsulWatcherFromClient(mockInternalConsulClient),
-			nil,
 			nil,
 		)
 		Expect(err).NotTo(HaveOccurred())
@@ -162,9 +162,11 @@ var _ = Describe("Hybrid Upstream Client", func() {
 			// do a **single** poll.
 			Expect(usChan).To(Receive(HaveLen(4 + (i + 1))))
 		}
+
 	})
 
 	Context("Sleep client", func() {
+
 		BeforeEach(func() {
 			baseUsClient = sleepyClient{UpstreamClient: baseUsClient}
 		})
@@ -197,6 +199,7 @@ var _ = Describe("Hybrid Upstream Client", func() {
 	})
 
 	Context("kubernetes client is nil", func() {
+
 		BeforeEach(func() {
 			writeResources()
 
@@ -209,6 +212,7 @@ var _ = Describe("Hybrid Upstream Client", func() {
 			Expect(err).NotTo(HaveOccurred())
 			Expect(list).To(HaveLen(1))
 		})
+
 	})
 })
 
