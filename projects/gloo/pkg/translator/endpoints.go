@@ -26,6 +26,7 @@ func (t *translatorInstance) computeClusterEndpoints(
 	upstreamRefKeyToEndpoints map[string][]*v1.Endpoint,
 	reports reporter.ResourceReports,
 ) []*envoy_config_endpoint_v3.ClusterLoadAssignment {
+
 	_, span := trace.StartSpan(params.Ctx, "gloo.translator.computeClusterEndpoints")
 	defer span.End()
 

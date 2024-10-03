@@ -6,6 +6,7 @@ import (
 	"hash/fnv"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/solo-io/gloo/pkg/utils/api_conversion"
