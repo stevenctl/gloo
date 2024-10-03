@@ -93,10 +93,6 @@ func (m *UpstreamSpec) Equal(that interface{}) bool {
 		}
 	}
 
-	if m.GetIsMesh() != target.GetIsMesh() {
-		return false
-	}
-
 	return true
 }
 

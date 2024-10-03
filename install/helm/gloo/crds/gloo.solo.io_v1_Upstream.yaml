@@ -1782,8 +1782,6 @@ spec:
                           type: string
                       type: object
                     type: array
-                  isMesh:
-                    type: boolean
                   serviceSpec:
                     properties:
                       graphql:
