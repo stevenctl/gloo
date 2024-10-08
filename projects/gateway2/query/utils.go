@@ -59,7 +59,7 @@ func ProcessBackendRef(obj client.Object, err error, reporter reports.ParentRefR
 				Message: "invalid port value",
 			})
 		} else {
-			name := serviceentry.UpstreamForServiceEntry(backendObj.GetName(), port)
+			name := serviceentry.UpstreamForServiceEntry(backendObj.GetName(), string(backendRef.Name), port)
 			return &name
 		}
 	default:

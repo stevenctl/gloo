@@ -24,7 +24,7 @@ func (s *seUsPlugin) Name() string {
 }
 
 func (s *seUsPlugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *cluster_v3.Cluster) error {
-	if _, ok := in.Metadata.Labels[internalServiceEntryLabel]; !ok {
+	if _, ok := in.Metadata.Labels[InternalServiceEntryLabel]; !ok {
 		return nil
 	}
 
