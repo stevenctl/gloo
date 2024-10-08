@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/solo-io/gloo/projects/gateway2/serviceentry"
 	"github.com/solo-io/gloo/projects/gloo/constants"
 	"github.com/solo-io/gloo/projects/gloo/pkg/bootstrap"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
@@ -110,6 +111,7 @@ func Plugins(opts bootstrap.Opts) []plugins.Plugin {
 		deprecated_cipher_passthrough.NewPlugin(),
 		local_ratelimit.NewPlugin(),
 		istio_automtls.NewPlugin(opts.GlooGateway.IstioValues.SidecarOnGatewayEnabled),
+		serviceentry.NewUpstreamPlugin(),
 	)
 
 	if opts.KubeClient != nil {

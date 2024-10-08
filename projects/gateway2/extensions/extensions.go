@@ -4,12 +4,16 @@ import (
 	"context"
 
 	gatewayv1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gateway2/krtextensions"
 	"github.com/solo-io/gloo/projects/gateway2/query"
+	"github.com/solo-io/gloo/projects/gateway2/serviceentry"
 	"github.com/solo-io/gloo/projects/gateway2/translator"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/registry"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
 	"github.com/solo-io/solo-kit/pkg/api/v2/reporter"
+	"istio.io/istio/pkg/kube"
 	controllerruntime "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	apiv1 "sigs.k8s.io/gateway-api/apis/v1"
 )
 
@@ -22,6 +26,10 @@ type K8sGatewayExtensions interface {
 	// GetTranslator allows an extension to provide custom translation for
 	// different gateway classes.
 	GetTranslator(context.Context, *apiv1.Gateway, registry.PluginRegistry) translator.K8sGwTranslator
+
+	// GetKRTExtensions allows injecting additional elements into core KRT
+	// collections before generating an APISnapshot along with the Proxy.
+	GetKRTExtensions(ctx context.Context, istioKubeClient kube.Client) krtextensions.KRTExtension
 }
 
 // K8sGatewayExtensionsFactoryParameters contains the parameters required to start Gloo K8s Gateway Extensions (including Translator Plugins)
@@ -42,12 +50,17 @@ type K8sGatewayExtensionsFactory func(
 
 // NewK8sGatewayExtensions returns the Open Source implementation of K8sGatewayExtensions
 func NewK8sGatewayExtensions(
-	_ context.Context,
+	ctx context.Context,
 	params K8sGatewayExtensionsFactoryParameters,
 ) (K8sGatewayExtensions, error) {
+	if err := seSetup(ctx, params); err != nil {
+		return nil, err
+	}
+
 	queries := query.NewData(
 		params.Mgr.GetClient(),
 		params.Mgr.GetScheme(),
+		newSeBeRefResolver(params.Mgr.GetClient()),
 	)
 
 	return &k8sGatewayExtensions{
@@ -57,6 +70,27 @@ func NewK8sGatewayExtensions(
 		statusReporter:          params.StatusReporter,
 		queries:                 queries,
 	}, nil
+}
+
+func seSetup(
+	ctx context.Context,
+	params K8sGatewayExtensionsFactoryParameters,
+) error {
+	// register se into scheme
+	if err := addToScheme(params.Mgr.GetScheme()); err != nil {
+		return err
+	}
+	// index fields
+	if err := iterateIndices(func(obj client.Object, field string, indexer client.IndexerFunc) error {
+		return params.Mgr.GetFieldIndexer().IndexField(ctx, obj, field, indexer)
+	}); err != nil {
+		return err
+	}
+	// kick xds on SE changes
+	if err := watchDependencies(ctx, params.Mgr, params.KickXds); err != nil {
+		return err
+	}
+	return nil
 }
 
 type k8sGatewayExtensions struct {
@@ -71,6 +105,12 @@ type k8sGatewayExtensions struct {
 
 func (e *k8sGatewayExtensions) GetTranslator(_ context.Context, _ *apiv1.Gateway, pluginRegistry registry.PluginRegistry) translator.K8sGwTranslator {
 	return translator.NewTranslator(e.queries, pluginRegistry)
+}
+
+func (e *k8sGatewayExtensions) GetKRTExtensions(ctx context.Context, istioKubeClient kube.Client) krtextensions.KRTExtension {
+	return krtextensions.Aggregate{
+		serviceentry.New(ctx, istioKubeClient),
+	}
 }
 
 func (e *k8sGatewayExtensions) CreatePluginRegistry(_ context.Context) registry.PluginRegistry {

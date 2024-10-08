@@ -34,6 +34,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/solo-io/gloo/pkg/utils/statsutils"
 	"github.com/solo-io/gloo/projects/gateway2/extensions"
+	"github.com/solo-io/gloo/projects/gateway2/krtextensions"
 	"github.com/solo-io/gloo/projects/gateway2/reports"
 	gwplugins "github.com/solo-io/gloo/projects/gateway2/translator/plugins"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/registry"
@@ -201,6 +202,7 @@ var _ krt.ResourceNamer = &xdsSnapWrapper{}
 func (p *xdsSnapWrapper) Equals(in *xdsSnapWrapper) bool {
 	return p.snap.Equal(in.snap)
 }
+
 func (p *xdsSnapWrapper) ResourceName() string {
 	return p.proxyKey
 }
@@ -216,51 +218,14 @@ var _ krt.ResourceNamer = &glooProxy{}
 func (p *glooProxy) Equals(in *glooProxy) bool {
 	return proto.Equal(p.proxy, in.proxy)
 }
+
 func (p *glooProxy) ResourceName() string {
 	return xds.SnapshotCacheKey(p.proxy)
 }
 
-var _ krt.ResourceNamer = &glooEndpoint{}
-
-// stolen from projects/gloo/pkg/upstreams/serviceentry/krtwrappers.go
-// TODO: consolidate this stuff
-func UnwrapEps(geps []*glooEndpoint) gloov1.EndpointList {
-	out := make(gloov1.EndpointList, 0, len(geps))
-	for _, ep := range geps {
-		out = append(out, ep.Endpoint)
-	}
-	return out
-}
-
-// glooEndpoint provides a krt keying function for Gloo's `v1.Endpoint`
-type glooEndpoint struct {
-	*gloov1.Endpoint
-}
-
-func (ep *glooEndpoint) Equals(in *glooEndpoint) bool {
-	return proto.Equal(ep, in)
-}
-
-func (ep *glooEndpoint) ResourceName() string {
-	return ep.Metadata.GetName() + "/" + ep.Metadata.GetNamespace()
-}
-
-var _ krt.ResourceNamer = &upstream{}
-
-// upstream provides a keying function for Gloo's `v1.Upstream`
-type upstream struct {
-	*gloov1.Upstream
-}
-
-func (us *upstream) ResourceName() string {
-	return us.Metadata.GetName() + "/" + us.Metadata.GetNamespace()
-}
-func (us *upstream) Equals(in *upstream) bool {
-	return proto.Equal(us, in)
-}
-
 func (s *ProxySyncer) Start(ctx context.Context) error {
 	ctx = contextutils.WithLogger(ctx, "k8s-gw-syncer")
+	krtExtensions := s.k8sGwExtensions.GetKRTExtensions(ctx, s.istioClient)
 	// TODO: handle cfgmap noisiness?
 	// https://github.com/solo-io/gloo/blob/main/projects/gloo/pkg/api/converters/kube/artifact_converter.go#L31
 	configMapClient := kclient.New[*corev1.ConfigMap](s.istioClient)
@@ -277,39 +242,46 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	)
 
 	// helper collection to map from the kube Upstream type to the gloov1.Upstream wrapper
-	glooUpstreams := krt.NewCollection(kubeUpstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) **upstream {
+	glooUpstreams := krt.NewCollection(kubeUpstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) **krtextensions.KRTUpstream {
 		// TODO: not cloning, this is already a copy from the underlying cache, right?!
 		glooUs := &u.Spec
 		glooUs.Metadata = &core.Metadata{}
 		glooUs.GetMetadata().Name = u.GetName()
 		glooUs.GetMetadata().Namespace = u.GetNamespace()
-		us := &upstream{glooUs}
+		us := &krtextensions.KRTUpstream{Upstream: glooUs}
 		return &us
 	}, krt.WithName("GlooUpstreams"))
 
 	serviceClient := kclient.New[*corev1.Service](s.istioClient)
 	services := krt.WrapClient(serviceClient, krt.WithName("Services"))
 
-	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []*upstream {
-		uss := []*upstream{}
+	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []*krtextensions.KRTUpstream {
+		uss := []*krtextensions.KRTUpstream{}
 		for _, port := range svc.Spec.Ports {
 			us := kubeupstreams.ServiceToUpstream(ctx, svc, port)
-			uss = append(uss, &upstream{us})
+			uss = append(uss, &krtextensions.KRTUpstream{Upstream: us})
 		}
 		return uss
 	}, krt.WithName("InMemoryUpstreams"))
 
-	finalUpstreams := krt.JoinCollection([]krt.Collection[*upstream]{glooUpstreams, inMemUpstreams})
+	finalUpstreams := krt.JoinCollection(append(
+		[]krt.Collection[*krtextensions.KRTUpstream]{glooUpstreams, inMemUpstreams},
+		krtExtensions.Upstreams()...,
+	))
 
-	podClient := kclient.New[*corev1.Pod](s.istioClient)
+	podClient := kclient.NewFiltered[*corev1.Pod](s.istioClient, kclient.Filter{
+		ObjectTransform: kube.StripPodUnusedFields,
+	})
 	pods := krt.WrapClient(podClient, krt.WithName("Pods"))
 
 	epClient := kclient.New[*corev1.Endpoints](s.istioClient)
 	kubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
 
-	glooEndpoints := krt.NewManyFromNothing(func(kctx krt.HandlerContext) []*glooEndpoint {
+	glooEndpoints := krt.NewManyFromNothing(func(kctx krt.HandlerContext) []*krtextensions.KRTEndpoint {
 		return buildEndpoints(ctx, kctx, finalUpstreams, kubeEndpoints, services, pods)
 	}, krt.WithName("GlooEndpoints"))
+
+	finalEndpoints := krt.JoinCollection(append(krtExtensions.Endpoints(), glooEndpoints))
 
 	kubeGateways, kubeGwClient := setupCollectionDynamic[gwv1.Gateway](
 		ctx,
@@ -333,7 +305,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 			kctx,
 			proxy,
 			configMaps,
-			glooEndpoints,
+			finalEndpoints,
 			secrets,
 			finalUpstreams,
 		)
@@ -390,11 +362,11 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 func buildEndpoints(
 	ctx context.Context,
 	kctx krt.HandlerContext,
-	FinalUpstreams krt.Collection[*upstream],
+	FinalUpstreams krt.Collection[*krtextensions.KRTUpstream],
 	KubeEndpoints krt.Collection[*corev1.Endpoints],
 	Services krt.Collection[*corev1.Service],
 	Pods krt.Collection[*corev1.Pod],
-) []*glooEndpoint {
+) []*krtextensions.KRTEndpoint {
 	upstreamSpecs := make(map[*core.ResourceRef]*kubeplugin.UpstreamSpec)
 	upstreams := krt.Fetch(kctx, FinalUpstreams)
 	for _, us := range upstreams {
@@ -418,9 +390,9 @@ func buildEndpoints(
 	if len(warns) > 0 || len(errs) > 0 {
 		// FIXME
 	}
-	out := make([]*glooEndpoint, 0, len(endpoints))
+	out := make([]*krtextensions.KRTEndpoint, 0, len(endpoints))
 	for _, gep := range endpoints {
-		out = append(out, &glooEndpoint{gep})
+		out = append(out, &krtextensions.KRTEndpoint{Endpoint: gep})
 	}
 	return out
 }
@@ -429,9 +401,7 @@ func buildEndpoints(
 func (s *ProxySyncer) buildProxy(ctx context.Context, gw *gwv1.Gateway) *glooProxy {
 	stopwatch := statsutils.NewTranslatorStopWatch("ProxySyncer")
 	stopwatch.Start()
-	var (
-		proxies gloov1.ProxyList
-	)
+	var proxies gloov1.ProxyList
 	defer func() {
 		duration := stopwatch.Stop(ctx)
 		contextutils.LoggerFrom(ctx).Debugf("translated and wrote %d proxies in %s", len(proxies), duration.String())
@@ -477,9 +447,9 @@ func (s *ProxySyncer) buildXdsSnapshot(
 	kctx krt.HandlerContext,
 	proxy *glooProxy,
 	kcm krt.Collection[*corev1.ConfigMap],
-	kep krt.Collection[*glooEndpoint],
+	kep krt.Collection[*krtextensions.KRTEndpoint],
 	ks krt.Collection[*corev1.Secret],
-	kus krt.Collection[*upstream],
+	kus krt.Collection[*krtextensions.KRTUpstream],
 ) *xdsSnapWrapper {
 	cfgmaps := krt.Fetch(kctx, kcm)
 	endpoints := krt.Fetch(kctx, kep)
@@ -524,7 +494,7 @@ func (s *ProxySyncer) buildXdsSnapshot(
 	latestSnap.Upstreams = gupstreams
 
 	geps := endpoints
-	eps := UnwrapEps(geps)
+	eps := krtextensions.UnwrapEps(geps)
 	latestSnap.Endpoints = eps
 
 	xdsSnapshot, reports, proxyReport := s.proxyTranslator.buildXdsSnapshot(ctx, proxy.proxy, &latestSnap)

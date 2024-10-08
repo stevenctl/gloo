@@ -4,8 +4,10 @@ import (
 	"errors"
 
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/kube/apis/gloo.solo.io/v1"
+	networkingclient "istio.io/client-go/pkg/apis/networking/v1"
 
 	"github.com/solo-io/gloo/projects/gateway2/reports"
+	"github.com/solo-io/gloo/projects/gateway2/serviceentry"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -42,6 +44,22 @@ func ProcessBackendRef(obj client.Object, err error, reporter reports.ParentRefR
 			})
 		} else {
 			name := backendObj.GetName()
+			return &name
+		}
+	case *networkingclient.ServiceEntry:
+		var port uint32
+		if backendRef.Port != nil {
+			port = uint32(*backendRef.Port)
+		}
+		if port == 0 {
+			reporter.SetCondition(reports.HTTPRouteCondition{
+				Type:    gwv1.RouteConditionResolvedRefs,
+				Status:  metav1.ConditionFalse,
+				Reason:  gwv1.RouteReasonUnsupportedValue,
+				Message: "invalid port value",
+			})
+		} else {
+			name := serviceentry.UpstreamForServiceEntry(backendObj.GetName(), port)
 			return &name
 		}
 	default:

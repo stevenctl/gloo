@@ -162,7 +162,8 @@ type setupSyncer struct {
 }
 
 func NewControlPlane(ctx context.Context, grpcServer *grpc.Server, bindAddr net.Addr, kubeControlPlaneCfg bootstrap.KubernetesControlPlaneConfig,
-	callbacks xdsserver.Callbacks, start bool) bootstrap.ControlPlane {
+	callbacks xdsserver.Callbacks, start bool,
+) bootstrap.ControlPlane {
 	snapshotCache := xds.NewAdsSnapshotCache(ctx)
 	xdsServer := server.NewServer(ctx, snapshotCache, callbacks)
 	reflection.Register(grpcServer)
@@ -704,7 +705,7 @@ func RunGlooWithExtensions(opts bootstrap.Opts, extensions Extensions) error {
 	if err != nil {
 		return err
 	}
-	//The validation grpc server is available for custom controllers
+	// The validation grpc server is available for custom controllers
 	if opts.ValidationServer.StartGrpcServer {
 		validationServer := opts.ValidationServer
 		lis, err := net.Listen(validationServer.BindAddr.Network(), validationServer.BindAddr.String())
@@ -899,7 +900,8 @@ func RunGlooWithExtensions(opts bootstrap.Opts, extensions Extensions) error {
 	var proxySyncer *proxy_syncer.ProxySyncer
 	mgr, err := controller.BuildMgr(false)
 	if err != nil {
-		// do something
+		logger.Error(err)
+		return err
 	}
 	statusReporter := reporter.NewReporter(
 		defaults.KubeGatewayReporter,
@@ -915,7 +917,8 @@ func RunGlooWithExtensions(opts bootstrap.Opts, extensions Extensions) error {
 			KickXds:                 inputChannels.Kick,
 		})
 		if err != nil {
-			// do something
+			logger.Error(err)
+			return err
 		}
 		proxySyncer = proxy_syncer.NewProxySyncer(
 			wellknown.GatewayControllerName,
@@ -1169,7 +1172,6 @@ type constructOptsParams struct {
 
 // constructs bootstrap opts from settings
 func constructOpts(ctx context.Context, params constructOptsParams) (bootstrap.Opts, error) {
-
 	var (
 		cfg           *rest.Config
 		kubeCoreCache corecache.KubeCoreCache

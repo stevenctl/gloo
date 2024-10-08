@@ -146,13 +146,18 @@ type RouteError struct {
 	Error     Error
 }
 
-func NewData(c client.Client, scheme *runtime.Scheme) GatewayQueries {
-	return &gatewayQueries{c, scheme}
+func NewData(
+	c client.Client,
+	scheme *runtime.Scheme,
+	customBackendResolvers ...BackendRefResolver,
+) GatewayQueries {
+	return &gatewayQueries{c, scheme, customBackendResolvers}
 }
 
 type gatewayQueries struct {
-	client client.Client
-	scheme *runtime.Scheme
+	client                 client.Client
+	scheme                 *runtime.Scheme
+	customBackendResolvers []BackendRefResolver
 }
 
 func (r *gatewayQueries) referenceAllowed(ctx context.Context, from metav1.GroupKind, fromns string, to metav1.GroupKind, tons, toname string) (bool, error) {
@@ -287,6 +292,12 @@ func (r *gatewayQueries) GetBackendForRef(ctx context.Context, obj From, backend
 	}
 	backendGK := metav1.GroupKind{Group: backendGroup, Kind: backendKind}
 
+	for _, cr := range r.customBackendResolvers {
+		if o, err, ok := cr.GetRef(ctx, obj, string(backend.Name), backend.Namespace, backendGK); ok {
+			return o, err
+		}
+	}
+
 	return r.getRef(ctx, obj, string(backend.Name), backend.Namespace, backendGK)
 }
 
@@ -335,6 +346,19 @@ func (r *gatewayQueries) getRef(ctx context.Context, from From, backendName stri
 		return nil, err
 	}
 	return ret, nil
+}
+
+type BackendRefResolver interface {
+	// GetRef allows resolving custom backend types.
+	// The bool return value indicates whether this resolver takes responsibility
+	// for the given GroupKind.
+	GetRef(
+		ctx context.Context,
+		from From,
+		backendName string,
+		backendNS *apiv1.Namespace,
+		backendGK metav1.GroupKind,
+	) (client.Object, error, bool)
 }
 
 func isHttpRouteAllowed(allowedKinds []metav1.GroupKind) bool {
