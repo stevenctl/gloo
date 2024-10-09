@@ -70,9 +70,11 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 				contextutils.LoggerFrom(params.Ctx).Warn("Istio sidecar injection (istioIntegration.enableIstioSidecarOnGateway) should be disabled for Istio automtls mode")
 			}
 
+			sni := buildSni(in)
+
 			socketmatches = []*envoy_config_cluster_v3.Cluster_TransportSocketMatch{
 				// add istio mtls match
-				createIstioMatch(),
+				createIstioMatch(sni),
 				// plaintext match. Note: this needs to come after the tlsMode-istio match
 				createDefaultIstioMatch(),
 			}
@@ -85,7 +87,7 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 
 func buildSni(us *v1.Upstream) string {
 	if seHost, ok := us.Metadata.GetLabels()[serviceentry.InternalServiceEntryHostLabel]; ok {
-		if sePort, ok := us.Metadata.GetLabels()[serviceentry.InternalServiceEntryHostLabel]; ok {
+		if sePort, ok := us.Metadata.GetLabels()[serviceentry.InternalServiceEntryPortLabel]; ok {
 			if sePort, err := strconv.Atoi(sePort); err == nil {
 				return buildDNSSrvSubsetKey(seHost, uint32(sePort))
 			}
@@ -138,7 +140,7 @@ func svcFQDN(name, ns, trustDomain string) string {
 	return fmt.Sprintf("%s.%s.svc.%s", name, ns, trustDomain)
 }
 
-func createIstioMatch() *envoy_config_cluster_v3.Cluster_TransportSocketMatch {
+func createIstioMatch(sni string) *envoy_config_cluster_v3.Cluster_TransportSocketMatch {
 	istioMtlsTransportSocketMatch := &_struct.Struct{
 		Fields: map[string]*_struct.Value{
 			constants.TLSModeLabelShortname: {Kind: &_struct.Value_StringValue{StringValue: constants.IstioMutualTLSModeLabel}},
@@ -198,6 +200,7 @@ func createIstioMatch() *envoy_config_cluster_v3.Cluster_TransportSocketMatch {
 				},
 			},
 		},
+		Sni: sni,
 	}
 
 	typedConfig, _ := utils.MessageToAny(sslSds)

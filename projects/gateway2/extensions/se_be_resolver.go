@@ -49,18 +49,20 @@ func (s *seBeRefResolver) GetRef(
 		return nil, nil, false
 	}
 
-	if backendNS != nil {
-		return nil, eris.New("must not specify namespace for Hostname backend"), true
-	}
-
 	var seList networkingclient.ServiceEntryList
 	s.client.List(ctx, &seList, &client.ListOptions{
-		FieldSelector: fields.OneTermEqualSelector(SEHostnameField, backendName),
-		// no need for reference grant, only look in same namespace
+		FieldSelector: fields.AndSelectors(
+			fields.OneTermEqualSelector(SEHostnameField, backendName),
+		),
 		Namespace: from.Namespace(),
 	})
 	var out *networkingclient.ServiceEntry
 	for _, se := range seList.Items {
+		if !seVisibleFrom(from.Namespace(), se) {
+			continue
+		}
+
+		// prioritize the oldest visible ServiceEntry
 		if out == nil || se.CreationTimestamp.Time.Before(out.CreationTimestamp.Time) {
 			out = se
 		}
@@ -69,6 +71,24 @@ func (s *seBeRefResolver) GetRef(
 		return nil, eris.New("No service entry with matching hostname"), true
 	}
 	return out, nil, true
+}
+
+func seVisibleFrom(fromNs string, se *networkingclient.ServiceEntry) bool {
+	// no exportTo means it is global
+	// same namespace is always visible
+	if len(se.Spec.ExportTo) == 0 || se.Namespace == fromNs {
+		return true
+	}
+
+	// otherwise find something that exports to from's ns
+	visible := false
+	for _, exportTo := range se.Spec.ExportTo {
+		if exportTo == fromNs || exportTo == "*" {
+			visible = true
+			break
+		}
+	}
+	return visible
 }
 
 // everything below will live in waypointquery/indexers.go

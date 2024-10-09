@@ -29,7 +29,8 @@ import (
 const (
 	// InternalServiceEntryLabel links a generated Upstream back to the  ServiceEntry it is derived from.
 	InternalServiceEntryLabel = "internal.solo.io/serviceentry-key"
-	// InternalServiceEntryPortLabel references the port name on the ServiceEntry
+	// InternalServiceEntryPortLabel references the port number on the ServiceEntry
+	// This is used to help generate Istio SNI and to back reference within KRT.
 	InternalServiceEntryPortLabel = "internal.solo.io/serviceentry-port"
 	// InternalServiceEntryPortLabel references the hostname name on the ServiceEntry
 	InternalServiceEntryHostLabel = "internal.solo.io/serviceentry-host"
@@ -81,7 +82,7 @@ func New(ctx context.Context, client kube.Client) krtextensions.KRTExtension {
 }
 
 func UpstreamForServiceEntry(name, hostname string, port uint32) string {
-	return upstreamNamePrefix + name + "-" + strconv.Itoa(int(port))
+	return upstreamNamePrefix + name + "-" + strings.ReplaceAll(hostname, ".", "-") + "-" + strconv.Itoa(int(port))
 }
 
 func ServiceEntryInfoFromUpstream(us *v1.Upstream) (string, string, uint32, bool) {
@@ -112,12 +113,14 @@ func buildUpstreams(
 						Cluster:   "", // TODO we should be able to populate this I think
 						Labels: maps.MergeCopy(se.Labels, map[string]string{
 							InternalServiceEntryLabel:     se.GetNamespace() + "/" + se.GetName(),
-							InternalServiceEntryPortLabel: port.GetName(),
+							InternalServiceEntryPortLabel: strconv.Itoa(int(port.GetNumber())),
 							InternalServiceEntryHostLabel: hostname,
 						}),
 						Annotations: se.Annotations,
 					},
 				}
+
+				println("stevenctl build upstream: ", us.Metadata.Name)
 				// HACK
 				// here we create an upstream with no upstream type
 				// this may be a bad idea, but I'm going to try it
@@ -187,7 +190,7 @@ func buildEndpoints(
 			return nil
 		}
 		svcPort := slices.FindFunc(se.Spec.Ports, func(p *networking.ServicePort) bool {
-			return p.GetName() == sePort
+			return strconv.Itoa(int(p.GetNumber())) == sePort
 		})
 		if svcPort == nil {
 			println("stevenctl: failed find se port", seKey, sePort)
