@@ -86,12 +86,8 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 }
 
 func buildSni(us *v1.Upstream) string {
-	if seHost, ok := us.Metadata.GetLabels()[serviceentry.InternalServiceEntryHostLabel]; ok {
-		if sePort, ok := us.Metadata.GetLabels()[serviceentry.InternalServiceEntryPortLabel]; ok {
-			if sePort, err := strconv.Atoi(sePort); err == nil {
-				return buildDNSSrvSubsetKey(seHost, uint32(sePort))
-			}
-		}
+	if seHost, sePort, ok := serviceentry.GetHostPort(us); ok {
+		return buildDNSSrvSubsetKey(seHost, uint32(sePort))
 	}
 
 	if us.GetUpstreamType() == nil {
@@ -99,6 +95,7 @@ func buildSni(us *v1.Upstream) string {
 	}
 	switch us := us.GetUpstreamType().(type) {
 	case *v1.Upstream_Kube:
+		// assume all k8s are in the mesh
 		return buildDNSSrvSubsetKey(
 			svcFQDN(
 				us.Kube.GetServiceName(),

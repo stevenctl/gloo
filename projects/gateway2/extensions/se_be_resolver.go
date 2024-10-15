@@ -49,12 +49,17 @@ func (s *seBeRefResolver) GetRef(
 		return nil, nil, false
 	}
 
+	// default to searching ALL namespaces
+	// rely on exportTo here
+	nsFilter := ""
+	if backendNS != nil {
+		nsFilter = string(*backendNS)
+	}
+
 	var seList networkingclient.ServiceEntryList
 	s.client.List(ctx, &seList, &client.ListOptions{
-		FieldSelector: fields.AndSelectors(
-			fields.OneTermEqualSelector(SEHostnameField, backendName),
-		),
-		Namespace: from.Namespace(),
+		FieldSelector: fields.OneTermEqualSelector(SEHostnameField, backendName),
+		Namespace:     nsFilter,
 	})
 	var out *networkingclient.ServiceEntry
 	for _, se := range seList.Items {

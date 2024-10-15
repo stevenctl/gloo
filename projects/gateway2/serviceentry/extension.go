@@ -27,15 +27,31 @@ import (
 )
 
 const (
-	// InternalServiceEntryLabel links a generated Upstream back to the  ServiceEntry it is derived from.
-	InternalServiceEntryLabel = "internal.solo.io/serviceentry-key"
-	// InternalServiceEntryPortLabel references the port number on the ServiceEntry
+	// internalServiceEntryKeyLabel links a generated Upstream back to the  ServiceEntry it is derived from.
+	internalServiceEntryKeyLabel = "internal.solo.io/serviceentry-key"
+	// internalServiceEntryPortLabel references the port number on the ServiceEntry
 	// This is used to help generate Istio SNI and to back reference within KRT.
-	InternalServiceEntryPortLabel = "internal.solo.io/serviceentry-port"
+	internalServiceEntryPortLabel = "internal.solo.io/serviceentry-port"
 	// InternalServiceEntryPortLabel references the hostname name on the ServiceEntry
-	InternalServiceEntryHostLabel = "internal.solo.io/serviceentry-host"
-	upstreamNamePrefix            = "istio-se-"
+	internalServiceEntryHostLabel = "internal.solo.io/serviceentry-host"
+	// internalServiceEntryLocationLabel references the hostname name on the ServiceEntry
+	internalServiceEntryLocationLabel = "internal.solo.io/serviceentry-location"
 )
+
+func IsMeshInternal(us *v1.Upstream) bool {
+	return networking.ServiceEntry_MESH_INTERNAL.String() == us.Metadata.GetLabels()[internalServiceEntryLocationLabel]
+}
+
+func GetHostPort(us *v1.Upstream) (string, uint32, bool) {
+	seHost, hostOk := us.Metadata.GetLabels()[internalServiceEntryHostLabel]
+	sePortStr, portOk := us.Metadata.GetLabels()[internalServiceEntryPortLabel]
+	sePort, err := strconv.Atoi(sePortStr)
+	if !hostOk || !portOk || err != nil {
+		return "", 0, false
+	}
+
+	return seHost, uint32(sePort), true
+}
 
 type seExtension struct {
 	client    kube.Client
@@ -81,19 +97,10 @@ func New(ctx context.Context, client kube.Client) krtextensions.KRTExtension {
 	}
 }
 
-func UpstreamForServiceEntry(name, hostname string, port uint32) string {
-	return upstreamNamePrefix + name + "-" + strings.ReplaceAll(hostname, ".", "-") + "-" + strconv.Itoa(int(port))
-}
-
-func ServiceEntryInfoFromUpstream(us *v1.Upstream) (string, string, uint32, bool) {
-	seKey, seOk := us.Metadata.GetLabels()[InternalServiceEntryLabel]
-	sePort := us.Metadata.GetLabels()[InternalServiceEntryPortLabel]
-	seHost, hostOk := us.Metadata.GetLabels()[InternalServiceEntryHostLabel]
-
-	port, err := strconv.Atoi(sePort)
-	portOk := err == nil
-
-	return seKey, seHost, uint32(port), (seOk && portOk && hostOk)
+// UpstreamName is the unique mapping for the upstream generated for a specific
+// host:port combo on a ServiceEntry
+func UpstreamName(seName, hostname string, port uint32) string {
+	return "istio-se:" + seName + "-" + strings.ReplaceAll(hostname, ".", "-") + "-" + strconv.Itoa(int(port))
 }
 
 // buildUpstreams is a 1:Many mapping from ServiceEntry -> KRTUpstream.
@@ -104,17 +111,23 @@ func buildUpstreams(
 	return krt.NewManyCollection(serviceEntries, func(ctx krt.HandlerContext, se *networkingclient.ServiceEntry) []*krtextensions.KRTUpstream {
 		var out []*krtextensions.KRTUpstream
 
+		// only STATIC is supported in gloo
+		if se.Spec.Resolution != networking.ServiceEntry_STATIC {
+			return nil
+		}
+
 		for _, hostname := range se.Spec.Hosts {
 			for _, port := range se.Spec.Ports {
 				us := &v1.Upstream{
 					Metadata: &core.Metadata{
-						Name:      UpstreamForServiceEntry(se.Name, hostname, port.Number),
+						Name:      UpstreamName(se.Name, hostname, port.Number),
 						Namespace: se.Namespace,
 						Cluster:   "", // TODO we should be able to populate this I think
 						Labels: maps.MergeCopy(se.Labels, map[string]string{
-							InternalServiceEntryLabel:     se.GetNamespace() + "/" + se.GetName(),
-							InternalServiceEntryPortLabel: strconv.Itoa(int(port.GetNumber())),
-							InternalServiceEntryHostLabel: hostname,
+							internalServiceEntryKeyLabel:      se.GetNamespace() + "/" + se.GetName(),
+							internalServiceEntryPortLabel:     strconv.Itoa(int(port.GetNumber())),
+							internalServiceEntryHostLabel:     hostname,
+							internalServiceEntryLocationLabel: se.Spec.Location.String(),
 						}),
 						Annotations: se.Annotations,
 					},
@@ -178,8 +191,8 @@ func buildEndpoints(
 
 	inline := krt.NewManyCollection(Upstreams, func(ctx krt.HandlerContext, us *krtextensions.KRTUpstream) []*krtextensions.KRTEndpoint {
 		// first, resolve ServiceEntry and Port from referenes
-		sePort, portOk := us.Metadata.Labels[InternalServiceEntryPortLabel]
-		seKey, keyOk := us.Metadata.Labels[InternalServiceEntryLabel]
+		sePort, portOk := us.Metadata.Labels[internalServiceEntryPortLabel]
+		seKey, keyOk := us.Metadata.Labels[internalServiceEntryKeyLabel]
 		if !keyOk || !portOk {
 			// TODO log - not supposed to happen
 			return nil
@@ -241,7 +254,7 @@ func buildEndpoint(
 		Endpoint: &v1.Endpoint{
 			Upstreams: slices.Map(se.Spec.Hosts, func(hostname string) *core.ResourceRef {
 				return &core.ResourceRef{
-					Name:      UpstreamForServiceEntry(se.GetName(), hostname, svcPort.Number),
+					Name:      UpstreamName(se.GetName(), hostname, svcPort.Number),
 					Namespace: se.GetNamespace(),
 				}
 			}),
