@@ -295,21 +295,34 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	serviceClient := kclient.New[*corev1.Service](s.istioClient)
 	services := krt.WrapClient(serviceClient, krt.WithName("Services"))
 
-	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []krtcollections.UpstreamWrapper {
+	k8sServiceUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []krtcollections.UpstreamWrapper {
 		uss := []krtcollections.UpstreamWrapper{}
 		for _, port := range svc.Spec.Ports {
 			us := kubeupstreams.ServiceToUpstream(ctx, svc, port)
 			uss = append(uss, krtcollections.UpstreamWrapper{Inner: us})
 		}
 		return uss
-	}, krt.WithName("InMemoryUpstreams"))
+	}, krt.WithName("KuberntesServiceUpstreams"))
 
-	finalUpstreams := krt.JoinCollection([]krt.Collection[krtcollections.UpstreamWrapper]{glooUpstreams, inMemUpstreams})
+	finalUpstreams := krt.JoinCollection(append(
+		[]krt.Collection[krtcollections.UpstreamWrapper]{
+			glooUpstreams,
+			k8sServiceUpstreams,
+		},
+		s.k8sGwExtensions.KRTExtensions().Upstreams()...,
+	))
 
 	inputs := krtcollections.NewGlooK8sEndpointInputs(s.proxyTranslator.settings, s.istioClient, s.pods, services, finalUpstreams)
 
-	glooEndpoints := krtcollections.NewGlooK8sEndpoints(ctx, inputs)
-	clas := newEnvoyEndpoints(glooEndpoints)
+	// build Endpoint intermediate representation from kubernetes service and extensions
+	// TODO move kube service to be an extension
+	endpointIRs := krt.JoinCollection(append([]krt.Collection[krtcollections.EndpointsForUpstream]{
+		krtcollections.NewGlooK8sEndpoints(ctx, inputs),
+	},
+		s.k8sGwExtensions.KRTExtensions().Endpoints()...,
+	))
+
+	clas := newEnvoyEndpoints(endpointIRs)
 
 	kubeGateways := SetupCollectionDynamic[gwv1.Gateway](
 		ctx,
@@ -395,13 +408,13 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		inputs.Endpoints.Synced().HasSynced,
 		inputs.Pods.Synced().HasSynced,
 		inputs.Upstreams.Synced().HasSynced,
-		glooEndpoints.Synced().HasSynced,
+		k8sSvcEndpoints.Synced().HasSynced,
 		clas.Synced().HasSynced,
 		s.pods.Synced().HasSynced,
 		upstreams.Synced().HasSynced,
 		glooUpstreams.Synced().HasSynced,
 		finalUpstreams.Synced().HasSynced,
-		inMemUpstreams.Synced().HasSynced,
+		k8sServiceUpstreams.Synced().HasSynced,
 		kubeGateways.Synced().HasSynced,
 		glooProxies.Synced().HasSynced,
 		s.xdsSnapshots.Synced().HasSynced,
