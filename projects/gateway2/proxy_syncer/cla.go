@@ -25,26 +25,26 @@ func (c EndpointResources) Equals(in EndpointResources) bool {
 	return c.UpstreamRef == in.UpstreamRef && c.EndpointsVersion == in.EndpointsVersion
 }
 
-func newEnvoyEndpoints(glooEndpoints krt.Collection[EndpointsForUpstream]) krt.Collection[EndpointResources] {
+func newEnvoyEndpoints(glooEndpoints krt.Collection[krtcollections.EndpointsForUpstream]) krt.Collection[EndpointResources] {
 
-	clas := krt.NewCollection(glooEndpoints, func(_ krt.HandlerContext, ep EndpointsForUpstream) *EndpointResources {
+	clas := krt.NewCollection(glooEndpoints, func(_ krt.HandlerContext, ep krtcollections.EndpointsForUpstream) *EndpointResources {
 		return TransformEndpointToResources(ep)
 	})
 	return clas
 }
 
-func TransformEndpointToResources(ep EndpointsForUpstream) *EndpointResources {
+func TransformEndpointToResources(ep krtcollections.EndpointsForUpstream) *EndpointResources {
 	cla := prioritize(ep)
 	return &EndpointResources{
 		Endpoints:        resource.NewEnvoyResource(cla),
-		EndpointsVersion: ep.lbEpsEqualityHash,
+		EndpointsVersion: ep.LbEpsEqualityHash,
 		UpstreamRef:      ep.UpstreamRef,
 	}
 }
 
-func prioritize(ep EndpointsForUpstream) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func prioritize(ep krtcollections.EndpointsForUpstream) *envoy_config_endpoint_v3.ClusterLoadAssignment {
 	cla := &envoy_config_endpoint_v3.ClusterLoadAssignment{
-		ClusterName: ep.clusterName,
+		ClusterName: ep.ClusterName,
 	}
 	for loc, eps := range ep.LbEps {
 		var l *envoy_config_core_v3.Locality
@@ -57,7 +57,7 @@ func prioritize(ep EndpointsForUpstream) *envoy_config_endpoint_v3.ClusterLoadAs
 		}
 
 		endpoint := &envoy_config_endpoint_v3.LocalityLbEndpoints{
-			LbEndpoints: slices.Map(eps, func(e EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
+			LbEndpoints: slices.Map(eps, func(e krtcollections.EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
 			Locality:    l,
 		}
 

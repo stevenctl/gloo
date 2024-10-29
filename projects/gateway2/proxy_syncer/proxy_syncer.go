@@ -124,7 +124,6 @@ func NewProxySyncer(
 	glooReporter reporter.StatusReporter,
 	proxyReconcileQueue ggv2utils.AsyncQueue[gloov1.ProxyList],
 ) *ProxySyncer {
-
 	return &ProxySyncer{
 		controllerName:      controllerName,
 		writeNamespace:      writeNamespace,
@@ -181,6 +180,7 @@ var _ krt.ResourceNamer = xdsSnapWrapper{}
 func (p xdsSnapWrapper) Equals(in xdsSnapWrapper) bool {
 	return p.snap.Equal(in.snap)
 }
+
 func (p xdsSnapWrapper) ResourceName() string {
 	return p.proxyKey
 }
@@ -208,12 +208,10 @@ func (p glooProxy) Equals(in glooProxy) bool {
 	}
 	return true
 }
+
 func (p glooProxy) ResourceName() string {
 	return xds.SnapshotCacheKey(p.proxy)
 }
-
-// UpstreamWrapper provides a keying function for Gloo's `v1.Upstream`
-type UpstreamWrapper = krtcollections.ResourceWrapper[*gloov1.Upstream]
 
 type report struct {
 	reports.ReportMap
@@ -283,34 +281,34 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	)
 
 	// helper collection to map from the runtime.Object Upstream representation to the gloov1.Upstream wrapper
-	glooUpstreams := krt.NewCollection(upstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) *UpstreamWrapper {
+	glooUpstreams := krt.NewCollection(upstreams, func(kctx krt.HandlerContext, u *glookubev1.Upstream) *krtcollections.UpstreamWrapper {
 		glooUs := &u.Spec
 		md := core.Metadata{
 			Name:      u.GetName(),
 			Namespace: u.GetNamespace(),
 		}
 		glooUs.SetMetadata(&md)
-		us := &UpstreamWrapper{Inner: glooUs}
+		us := &krtcollections.UpstreamWrapper{Inner: glooUs}
 		return us
 	}, krt.WithName("GlooUpstreams"))
 
 	serviceClient := kclient.New[*corev1.Service](s.istioClient)
 	services := krt.WrapClient(serviceClient, krt.WithName("Services"))
 
-	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []UpstreamWrapper {
-		uss := []UpstreamWrapper{}
+	inMemUpstreams := krt.NewManyCollection(services, func(kctx krt.HandlerContext, svc *corev1.Service) []krtcollections.UpstreamWrapper {
+		uss := []krtcollections.UpstreamWrapper{}
 		for _, port := range svc.Spec.Ports {
 			us := kubeupstreams.ServiceToUpstream(ctx, svc, port)
-			uss = append(uss, UpstreamWrapper{Inner: us})
+			uss = append(uss, krtcollections.UpstreamWrapper{Inner: us})
 		}
 		return uss
 	}, krt.WithName("InMemoryUpstreams"))
 
-	finalUpstreams := krt.JoinCollection([]krt.Collection[UpstreamWrapper]{glooUpstreams, inMemUpstreams})
+	finalUpstreams := krt.JoinCollection([]krt.Collection[krtcollections.UpstreamWrapper]{glooUpstreams, inMemUpstreams})
 
-	inputs := NewGlooK8sEndpointInputs(s.proxyTranslator.settings, s.istioClient, s.pods, services, finalUpstreams)
+	inputs := krtcollections.NewGlooK8sEndpointInputs(s.proxyTranslator.settings, s.istioClient, s.pods, services, finalUpstreams)
 
-	glooEndpoints := NewGlooK8sEndpoints(ctx, inputs)
+	glooEndpoints := krtcollections.NewGlooK8sEndpoints(ctx, inputs)
 	clas := newEnvoyEndpoints(glooEndpoints)
 
 	kubeGateways := SetupCollectionDynamic[gwv1.Gateway](
@@ -441,7 +439,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 
 	logger.Infof("caches warm!")
 	timer := time.NewTicker(time.Second * 1)
-	var needsProxyRecompute = false
+	needsProxyRecompute := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -532,7 +530,7 @@ func (s *ProxySyncer) translateProxy(
 	kcm krt.Collection[*corev1.ConfigMap],
 	kep krt.Collection[EndpointResources],
 	ks krt.Collection[*corev1.Secret],
-	kus krt.Collection[UpstreamWrapper],
+	kus krt.Collection[krtcollections.UpstreamWrapper],
 	authConfigs krt.Collection[*extauthkubev1.AuthConfig],
 	rlConfigs krt.Collection[*rlkubev1a1.RateLimitConfig],
 ) *xdsSnapWrapper {
