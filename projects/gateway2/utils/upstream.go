@@ -13,6 +13,11 @@ func GetHostnameForUpstream(us *v1.Upstream) string {
 	switch uptype := us.GetUpstreamType().(type) {
 	case *v1.Upstream_Kube:
 		return fmt.Sprintf("%s.%s.svc.cluster.local", uptype.Kube.GetServiceName(), uptype.Kube.GetServiceNamespace())
+	case *v1.Upstream_Static:
+		if len(uptype.Static.Hosts) == 0 {
+			return ""
+		}
+		return uptype.Static.Hosts[0].Addr
 	}
 	return ""
 }
