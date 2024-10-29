@@ -50,15 +50,16 @@ func (iu *PerClientEnvoyClusters) FetchClustersForClient(kctx krt.HandlerContext
 func NewPerClientEnvoyClusters(
 	ctx context.Context,
 	translator setup.TranslatorFactory,
-	upstreams krt.Collection[UpstreamWrapper],
+	upstreams krt.Collection[krtcollections.UpstreamWrapper],
 	uccs krt.Collection[krtcollections.UniqlyConnectedClient],
 	ks krt.Collection[krtcollections.ResourceWrapper[*gloov1.Secret]],
 	settings krt.Singleton[glookubev1.Settings],
-	destinationRulesIndex DestinationRuleIndex) PerClientEnvoyClusters {
+	destinationRulesIndex DestinationRuleIndex,
+) PerClientEnvoyClusters {
 	ctx = contextutils.WithLogger(ctx, "upstream-translator")
 	logger := contextutils.LoggerFrom(ctx).Desugar()
 
-	clusters := krt.NewManyCollection(upstreams, func(kctx krt.HandlerContext, up UpstreamWrapper) []uccWithCluster {
+	clusters := krt.NewManyCollection(upstreams, func(kctx krt.HandlerContext, up krtcollections.UpstreamWrapper) []uccWithCluster {
 		logger := logger.With(zap.Stringer("upstream", up))
 		uccs := krt.Fetch(kctx, uccs)
 		uccWithClusterRet := make([]uccWithCluster, 0, len(uccs))
@@ -104,7 +105,6 @@ func NewPerClientEnvoyClusters(
 }
 
 func translate(ctx context.Context, settings *gloov1.Settings, translator setup.TranslatorFactory, snap *gloosnapshot.ApiSnapshot, up *gloov1.Upstream) (*envoy_config_cluster_v3.Cluster, uint64) {
-
 	ctx = settingsutil.WithSettings(ctx, settings)
 
 	params := plugins.Params{
@@ -123,7 +123,7 @@ func translate(ctx context.Context, settings *gloov1.Settings, translator setup.
 	return cluster, ggv2utils.HashProto(cluster)
 }
 
-func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, u UpstreamWrapper, c krtcollections.UniqlyConnectedClient) (*gloov1.Upstream, string) {
+func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, u krtcollections.UpstreamWrapper, c krtcollections.UniqlyConnectedClient) (*gloov1.Upstream, string) {
 	// host that would match the dest rule from the endpoints.
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
@@ -131,9 +131,8 @@ func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, dest
 
 	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, hostname, c.Labels)
 	if destrule != nil {
-
 		if outlier := destrule.Spec.GetTrafficPolicy().GetOutlierDetection(); outlier != nil {
-			name := getEndpointClusterName(u.Inner)
+			name := krtcollections.GetEndpointClusterName(u.Inner)
 			// do not mutate the original upstream
 			up := *u.Inner
 			out := &cluster.OutlierDetection{

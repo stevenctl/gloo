@@ -1,4 +1,4 @@
-package proxy_syncer_test
+package krtcollections_test
 
 import (
 	"context"
@@ -9,7 +9,7 @@ import (
 	"github.com/onsi/gomega"
 	. "github.com/onsi/gomega"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
-	. "github.com/solo-io/gloo/projects/gateway2/proxy_syncer"
+	. "github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	gloov1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/kubernetes"
 	core "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"

@@ -14,7 +14,7 @@ import (
 
 func TestTransformsEndpoint(t *testing.T) {
 	g := gomega.NewWithT(t)
-	us := UpstreamWrapper{
+	us := krtcollections.UpstreamWrapper{
 		Inner: &gloov1.Upstream{
 			Metadata: &core.Metadata{
 				Name:      "name",
@@ -22,8 +22,8 @@ func TestTransformsEndpoint(t *testing.T) {
 			},
 		},
 	}
-	efu := NewEndpointsForUpstream(us, nil)
-	efu.Add(krtcollections.PodLocality{}, EndpointWithMd{
+	efu := krtcollections.NewEndpointsForUpstream(us, nil)
+	efu.Add(krtcollections.PodLocality{}, krtcollections.EndpointWithMd{
 		LbEndpoint: &endpointv3.LbEndpoint{
 			HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
 				Endpoint: &endpointv3.Endpoint{
@@ -33,7 +33,7 @@ func TestTransformsEndpoint(t *testing.T) {
 				},
 			},
 		},
-		EndpointMd: EndpointMetadata{},
+		EndpointMd: krtcollections.EndpointMetadata{},
 	})
 
 	envoyResources := TransformEndpointToResources(*efu)
@@ -45,7 +45,7 @@ func TestTransformsEndpoint(t *testing.T) {
 
 func TestTransformsEndpointsWithLocality(t *testing.T) {
 	g := gomega.NewWithT(t)
-	us := UpstreamWrapper{
+	us := krtcollections.UpstreamWrapper{
 		Inner: &gloov1.Upstream{
 			Metadata: &core.Metadata{
 				Name:      "name",
@@ -53,8 +53,8 @@ func TestTransformsEndpointsWithLocality(t *testing.T) {
 			},
 		},
 	}
-	efu := NewEndpointsForUpstream(us, nil)
-	efu.Add(krtcollections.PodLocality{Region: "R1"}, EndpointWithMd{
+	efu := krtcollections.NewEndpointsForUpstream(us, nil)
+	efu.Add(krtcollections.PodLocality{Region: "R1"}, krtcollections.EndpointWithMd{
 		LbEndpoint: &endpointv3.LbEndpoint{
 			HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
 				Endpoint: &endpointv3.Endpoint{
@@ -64,9 +64,9 @@ func TestTransformsEndpointsWithLocality(t *testing.T) {
 				},
 			},
 		},
-		EndpointMd: EndpointMetadata{},
+		EndpointMd: krtcollections.EndpointMetadata{},
 	})
-	efu.Add(krtcollections.PodLocality{Region: "R2"}, EndpointWithMd{
+	efu.Add(krtcollections.PodLocality{Region: "R2"}, krtcollections.EndpointWithMd{
 		LbEndpoint: &endpointv3.LbEndpoint{
 			HostIdentifier: &endpointv3.LbEndpoint_Endpoint{
 				Endpoint: &endpointv3.Endpoint{
@@ -76,7 +76,7 @@ func TestTransformsEndpointsWithLocality(t *testing.T) {
 				},
 			},
 		},
-		EndpointMd: EndpointMetadata{},
+		EndpointMd: krtcollections.EndpointMetadata{},
 	})
 
 	envoyResources := TransformEndpointToResources(*efu)

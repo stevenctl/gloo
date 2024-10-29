@@ -1,4 +1,4 @@
-package proxy_syncer
+package krtcollections
 
 import (
 	"context"
@@ -11,7 +11,6 @@ import (
 	"google.golang.org/protobuf/types/known/structpb"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 
-	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	ggv2utils "github.com/solo-io/gloo/projects/gateway2/utils"
 	"github.com/solo-io/gloo/projects/gloo/constants"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
@@ -34,12 +33,15 @@ type EndpointsSettings struct {
 	EnableAutoMtls bool
 }
 
-var _ krt.ResourceNamer = EndpointsSettings{}
-var _ krt.Equaler[EndpointsSettings] = EndpointsSettings{}
+var (
+	_ krt.ResourceNamer              = EndpointsSettings{}
+	_ krt.Equaler[EndpointsSettings] = EndpointsSettings{}
+)
 
 func (p EndpointsSettings) Equals(in EndpointsSettings) bool {
 	return p == in
 }
+
 func (p EndpointsSettings) ResourceName() string {
 	return "endpoints-settings"
 }
@@ -47,12 +49,12 @@ func (p EndpointsSettings) ResourceName() string {
 type EndpointsInputs struct {
 	Upstreams         krt.Collection[UpstreamWrapper]
 	Endpoints         krt.Collection[*corev1.Endpoints]
-	Pods              krt.Collection[krtcollections.LocalityPod]
+	Pods              krt.Collection[LocalityPod]
 	EndpointsSettings krt.Singleton[EndpointsSettings]
 	Services          krt.Collection[*corev1.Service]
 }
 
-func NewGlooK8sEndpointInputs(settings krt.Singleton[glookubev1.Settings], istioClient kube.Client, pods krt.Collection[krtcollections.LocalityPod], services krt.Collection[*corev1.Service], finalUpstreams krt.Collection[UpstreamWrapper]) EndpointsInputs {
+func NewGlooK8sEndpointInputs(settings krt.Singleton[glookubev1.Settings], istioClient kube.Client, pods krt.Collection[LocalityPod], services krt.Collection[*corev1.Service], finalUpstreams krt.Collection[UpstreamWrapper]) EndpointsInputs {
 	epClient := kclient.New[*corev1.Endpoints](istioClient)
 	kubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
 	endpointSettings := krt.NewSingleton(func(ctx krt.HandlerContext) *EndpointsSettings {
@@ -76,12 +78,13 @@ type EndpointWithMd struct {
 	EndpointMd EndpointMetadata
 }
 type EndpointsForUpstream struct {
-	LbEps       map[krtcollections.PodLocality][]EndpointWithMd
+	LbEps       map[PodLocality][]EndpointWithMd
+	ClusterName string
 	UpstreamRef types.NamespacedName
 	Hostname    string
 	clusterName string
 
-	lbEpsEqualityHash uint64
+	LbEpsEqualityHash uint64
 }
 
 func NewEndpointsForUpstream(us UpstreamWrapper, logger *zap.Logger) *EndpointsForUpstream {
@@ -92,19 +95,21 @@ func NewEndpointsForUpstream(us UpstreamWrapper, logger *zap.Logger) *EndpointsF
 	lbEpsEqualityHash := h.Sum64()
 
 	// add the upstream hash to the clustername, so that if it changes the envoy cluster will become warm again.
-	clusterName := getEndpointClusterName(us.Inner)
+	clusterName := GetEndpointClusterName(us.Inner)
 	return &EndpointsForUpstream{
-		LbEps: make(map[krtcollections.PodLocality][]EndpointWithMd),
+		LbEps:       make(map[PodLocality][]EndpointWithMd),
+		ClusterName: clusterName,
 		UpstreamRef: types.NamespacedName{
 			Namespace: us.Inner.GetMetadata().GetNamespace(),
 			Name:      us.Inner.GetMetadata().GetName(),
 		},
 		Hostname:          ggv2utils.GetHostnameForUpstream(us.Inner),
 		clusterName:       clusterName,
-		lbEpsEqualityHash: lbEpsEqualityHash,
+		LbEpsEqualityHash: lbEpsEqualityHash,
 	}
 }
-func hashEndpoints(l krtcollections.PodLocality, emd EndpointWithMd) uint64 {
+
+func hashEndpoints(l PodLocality, emd EndpointWithMd) uint64 {
 	hasher := fnv.New64()
 	hasher.Write([]byte(l.Region))
 	hasher.Write([]byte(l.Zone))
@@ -115,10 +120,10 @@ func hashEndpoints(l krtcollections.PodLocality, emd EndpointWithMd) uint64 {
 	return hasher.Sum64()
 }
 
-func (e *EndpointsForUpstream) Add(l krtcollections.PodLocality, emd EndpointWithMd) {
+func (e *EndpointsForUpstream) Add(l PodLocality, emd EndpointWithMd) {
 	// xor it as we dont care about order - if we have the same endpoints in the same locality
 	// we are good.
-	e.lbEpsEqualityHash ^= hashEndpoints(l, emd)
+	e.LbEpsEqualityHash ^= hashEndpoints(l, emd)
 	e.LbEps[l] = append(e.LbEps[l], emd)
 }
 
@@ -127,7 +132,7 @@ func (c EndpointsForUpstream) ResourceName() string {
 }
 
 func (c EndpointsForUpstream) Equals(in EndpointsForUpstream) bool {
-	return c.UpstreamRef == in.UpstreamRef && c.lbEpsEqualityHash == in.lbEpsEqualityHash && c.Hostname == in.Hostname
+	return c.UpstreamRef == in.UpstreamRef && c.LbEpsEqualityHash == in.LbEpsEqualityHash && c.Hostname == in.Hostname
 }
 
 func NewGlooK8sEndpoints(ctx context.Context, inputs EndpointsInputs) krt.Collection[EndpointsForUpstream] {
@@ -200,7 +205,7 @@ func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func
 				}
 
 				var augmentedLabels map[string]string
-				var l krtcollections.PodLocality
+				var l PodLocality
 				if podName != "" {
 					maybePod := krt.FetchOne(kctx, augmentedPods, krt.FilterObjectName(types.NamespacedName{
 						Namespace: podNamespace,
@@ -263,7 +268,6 @@ func createLbEndpoint(address string, port uint32, podLabels map[string]string, 
 }
 
 func addIstioAutomtlsMetadata(metadata *envoy_config_core_v3.Metadata, labels map[string]string, enableAutoMtls bool) *envoy_config_core_v3.Metadata {
-
 	const EnvoyTransportSocketMatch = "envoy.transport_socket_match"
 	if enableAutoMtls {
 		if _, ok := labels[constants.IstioTlsModeLabel]; ok {
@@ -318,7 +322,7 @@ func findFirstPortInEndpointSubsets(subset corev1.EndpointSubset, singlePortServ
 }
 
 // TODO: use exported version from translator?
-func getEndpointClusterName(upstream *v1.Upstream) string {
+func GetEndpointClusterName(upstream *v1.Upstream) string {
 	clusterName := translator.UpstreamToClusterName(upstream.GetMetadata().Ref())
 	endpointClusterName, err := translator.GetEndpointClusterName(clusterName, upstream)
 	if err != nil {

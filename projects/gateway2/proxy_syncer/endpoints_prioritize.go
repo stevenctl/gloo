@@ -80,9 +80,9 @@ func priorityLabelOverrides(labels []string) ([]string, map[string]string) {
 	return priorityLabels, overriddenValueByLabel
 }
 
-func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func prioritizeWithLbInfo(logger *zap.Logger, ep krtcollections.EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
 	cla := &envoy_config_endpoint_v3.ClusterLoadAssignment{
-		ClusterName: ep.clusterName,
+		ClusterName: ep.ClusterName,
 	}
 	totalEndpoints := 0
 	for loc, eps := range ep.LbEps {
@@ -124,17 +124,17 @@ func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo Lo
 	return cla
 }
 
-func getEndpoints(eps []EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
+func getEndpoints(eps []krtcollections.EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
 	if lbinfo.PriorityInfo != nil && lbinfo.PriorityInfo.FailoverPriority != nil {
 		return applyFailoverPriorityPerLocality(eps, lbinfo)
 	}
 	return []*envoy_config_endpoint_v3.LocalityLbEndpoints{{
-		LbEndpoints: slices.Map(eps, func(e EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
+		LbEndpoints: slices.Map(eps, func(e krtcollections.EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
 	}}
 }
 
 func applyFailoverPriorityPerLocality(
-	eps []EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
+	eps []krtcollections.EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
 	// key is priority, value is the index of LocalityLbEndpoints.LbEndpoints
 	priorityMap := map[int][]int{}
 	for i, ep := range eps {
