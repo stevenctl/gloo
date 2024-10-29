@@ -136,10 +136,10 @@ func (c EndpointsForUpstream) Equals(in EndpointsForUpstream) bool {
 }
 
 func NewGlooK8sEndpoints(ctx context.Context, inputs EndpointsInputs) krt.Collection[EndpointsForUpstream] {
-	return krt.NewCollection(inputs.Upstreams, TransformUpstreamsBuilder(ctx, inputs), krt.WithName("GlooK8sEndpoints"))
+	return krt.NewCollection(inputs.Upstreams, transformK8sEndpoints(ctx, inputs), krt.WithName("GlooK8sEndpoints"))
 }
 
-func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func(kctx krt.HandlerContext, us UpstreamWrapper) *EndpointsForUpstream {
+func transformK8sEndpoints(ctx context.Context, inputs EndpointsInputs) func(kctx krt.HandlerContext, us UpstreamWrapper) *EndpointsForUpstream {
 	augmentedPods := inputs.Pods
 	kubeEndpoints := inputs.Endpoints
 	services := inputs.Services
@@ -216,7 +216,7 @@ func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func
 						augmentedLabels = maybePod.AugmentedLabels
 					}
 				}
-				ep := createLbEndpoint(addr.IP, port, augmentedLabels, enableAutoMtls)
+				ep := CreateLBEndpoint(addr.IP, port, augmentedLabels, enableAutoMtls)
 
 				ret.Add(l, EndpointWithMd{
 					LbEndpoint: ep,
@@ -231,7 +231,7 @@ func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func
 	}
 }
 
-func createLbEndpoint(address string, port uint32, podLabels map[string]string, enableAutoMtls bool) *envoy_config_endpoint_v3.LbEndpoint {
+func CreateLBEndpoint(address string, port uint32, podLabels map[string]string, enableAutoMtls bool) *envoy_config_endpoint_v3.LbEndpoint {
 	// Don't get the metadata labels and filter metadata for the envoy load balancer based on the upstream, as this is not used
 	// metadata := getLbMetadata(upstream, labels, "")
 	// Get the metadata labels for the transport socket match if Istio auto mtls is enabled
