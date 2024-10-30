@@ -9,6 +9,7 @@ import (
 	// endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/edsupstream"
 	"github.com/solo-io/go-utils/contextutils"
 	core "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
 	"go.uber.org/zap"
@@ -60,6 +61,24 @@ type seExtension struct {
 	endpoints krt.Collection[krtcollections.EndpointsForUpstream]
 }
 
+func (s *seExtension) HasSynced() bool {
+	return s.upstreams.Synced().HasSynced() && s.endpoints.Synced().HasSynced()
+}
+
+func (s *seExtension) WaitUntilSynced(stop <-chan struct{}) bool {
+	if !s.endpoints.Synced().WaitUntilSynced(stop) {
+		return false
+	}
+
+	select {
+	case <-stop:
+		return false
+	default:
+	}
+
+	return s.upstreams.Synced().WaitUntilSynced(stop)
+}
+
 // Endpoints implements krtcollections.KRTExtension.
 func (s *seExtension) Endpoints() []krt.Collection[krtcollections.EndpointsForUpstream] {
 	return []krt.Collection[krtcollections.EndpointsForUpstream]{s.endpoints}
@@ -97,9 +116,9 @@ func New(
 	}
 }
 
-// UpstreamName is the unique mapping for the upstream generated for a specific
+// upstreamName is the unique mapping for the upstream generated for a specific
 // host:port combo on a ServiceEntry
-func UpstreamName(seName, hostname string, port uint32) string {
+func upstreamName(seName, hostname string, port uint32) string {
 	return "istio-se:" + seName + "-" + strings.ReplaceAll(hostname, ".", "-") + "-" + strconv.Itoa(int(port))
 }
 
@@ -120,10 +139,11 @@ func buildUpstreams(
 			for _, port := range se.Spec.Ports {
 				us := &v1.Upstream{
 					Metadata: &core.Metadata{
-						Name:      UpstreamName(se.Name, hostname, port.Number),
+						Name:      upstreamName(se.Name, hostname, port.Number),
 						Namespace: se.Namespace,
 						Cluster:   "", // TODO we should be able to populate this I think
 						Labels: maps.MergeCopy(se.Labels, map[string]string{
+							edsupstream.InternalEDSLabel:      "enabled",
 							internalServiceEntryKeyLabel:      se.GetNamespace() + "/" + se.GetName(),
 							internalServiceEntryPortLabel:     strconv.Itoa(int(port.GetNumber())),
 							internalServiceEntryHostLabel:     hostname,

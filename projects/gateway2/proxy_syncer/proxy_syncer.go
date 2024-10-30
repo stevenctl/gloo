@@ -453,7 +453,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		inputs.Endpoints.Synced().HasSynced,
 		inputs.Pods.Synced().HasSynced,
 		inputs.Upstreams.Synced().HasSynced,
-		k8sSvcEndpoints.Synced().HasSynced,
+		endpointIRs.Synced().HasSynced,
 		clas.Synced().HasSynced,
 		s.augmentedPods.Synced().HasSynced,
 		upstreams.Synced().HasSynced,
