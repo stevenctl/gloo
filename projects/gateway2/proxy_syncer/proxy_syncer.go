@@ -76,12 +76,16 @@ type ProxySyncer struct {
 	istioClient     kube.Client
 
 	pods krt.Collection[krtcollections.LocalityPod]
+	ucc  krt.Collection[krtcollections.UniqlyConnectedClient]
 
 	proxyReconcileQueue ggv2utils.AsyncQueue[gloov1.ProxyList]
 
-	statusReport krt.Singleton[report]
-	xdsSnapshots krt.Collection[xdsSnapWrapper]
-	proxyTrigger *krt.RecomputeTrigger
+	statusReport            krt.Singleton[report]
+	mostXdsSnapshots        krt.Collection[xdsSnapWrapper]
+	perclientSnapCollection krt.Collection[xdsSnapWrapper]
+	proxyTrigger            *krt.RecomputeTrigger
+
+	destRules DestinationRuleIndex
 
 	waitForSync []cache.InformerSynced
 }
@@ -117,6 +121,7 @@ func NewProxySyncer(
 	mgr manager.Manager,
 	client kube.Client,
 	pods krt.Collection[krtcollections.LocalityPod],
+	ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 	k8sGwExtensions extensions.K8sGatewayExtensions,
 	translator setup.TranslatorFactory,
 	xdsCache envoycache.SnapshotCache,
@@ -134,6 +139,7 @@ func NewProxySyncer(
 		proxyTranslator:     NewProxyTranslator(translator, xdsCache, settings, syncerExtensions, glooReporter),
 		istioClient:         client,
 		pods:                pods,
+		ucc:                 ucc,
 		proxyReconcileQueue: proxyReconcileQueue,
 	}
 }
@@ -329,7 +335,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		proxy := s.buildProxy(ctx, gw)
 		return proxy
 	})
-	s.xdsSnapshots = krt.NewCollection(glooProxies, func(kctx krt.HandlerContext, proxy glooProxy) *xdsSnapWrapper {
+	s.mostXdsSnapshots = krt.NewCollection(glooProxies, func(kctx krt.HandlerContext, proxy glooProxy) *xdsSnapWrapper {
 		// we are recomputing xds snapshots as proxies have changed, signal that we need to sync xds with these new snapshots
 		xdsSnap := s.translateProxy(
 			ctx,
@@ -345,6 +351,8 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		)
 		return xdsSnap
 	})
+	epPerClient := NewIndexedEndpoints(s.ucc, glooEndpoints, s.destRules)
+	s.perclientSnapCollection = snapshotPerClient(s.ucc, s.mostXdsSnapshots, epPerClient)
 
 	// build ProxyList collection as glooProxies change
 	proxiesToReconcile := krt.NewSingleton(func(kctx krt.HandlerContext) *proxyList {
@@ -388,6 +396,9 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		}
 		return &report{merged}
 	})
+
+	s.destRules = NewDestRuleIndex(s.istioClient)
+
 	s.waitForSync = []cache.InformerSynced{
 		authConfigs.Synced().HasSynced,
 		rlConfigs.Synced().HasSynced,
@@ -406,7 +417,9 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		inMemUpstreams.Synced().HasSynced,
 		kubeGateways.Synced().HasSynced,
 		glooProxies.Synced().HasSynced,
-		s.xdsSnapshots.Synced().HasSynced,
+		s.perclientSnapCollection.Synced().HasSynced,
+		s.mostXdsSnapshots.Synced().HasSynced,
+		s.destRules.Destrules.Synced().HasSynced,
 	}
 	return nil
 }
@@ -456,11 +469,12 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 				s.syncGatewayStatus(ctx, latestReport)
 				s.syncRouteStatus(ctx, latestReport)
 			}()
+			// TODO: not use goroutine here?
 			go func() {
 				// TODO: make sure this can't happen in parallel with itself from previous iteration
 				// we probably will re-work status anyway..
 				logger.Debug("syncing status plugins")
-				snaps := s.xdsSnapshots.List()
+				snaps := s.mostXdsSnapshots.List()
 				for _, snapWrap := range snaps {
 					var proxiesWithReports []translatorutils.ProxyWithReports
 					proxiesWithReports = append(proxiesWithReports, snapWrap.proxyWithReport)
@@ -468,7 +482,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 					initStatusPlugins(ctx, proxiesWithReports, snapWrap.pluginRegistry)
 				}
 				for _, snapWrap := range snaps {
-					err := s.proxyTranslator.syncXdsAndStatus(ctx, snapWrap.snap, snapWrap.proxyKey, snapWrap.fullReports)
+					err := s.proxyTranslator.syncStatus(ctx, snapWrap.snap, snapWrap.proxyKey, snapWrap.fullReports)
 					if err != nil {
 						logger.Errorf("error while syncing proxy '%s': %s", snapWrap.proxyKey, err.Error())
 					}
@@ -476,6 +490,10 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 					var proxiesWithReports []translatorutils.ProxyWithReports
 					proxiesWithReports = append(proxiesWithReports, snapWrap.proxyWithReport)
 					applyStatusPlugins(ctx, proxiesWithReports, snapWrap.pluginRegistry)
+				}
+				for _, snapWrap := range s.perclientSnapCollection.List() {
+					s.proxyTranslator.syncStatus(ctx, snapWrap.snap, snapWrap.proxyKey, snapWrap.fullReports)
+
 				}
 			}()
 		case <-s.inputs.genericEvent.Next():

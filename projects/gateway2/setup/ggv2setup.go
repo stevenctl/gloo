@@ -79,6 +79,7 @@ func getInitialSettings(ctx context.Context, c istiokube.Client, nns types.Names
 
 func StartGGv2(ctx context.Context,
 	setupOpts *bootstrap.SetupOpts,
+	uccBuilder krtcollections.UniquelyConnectedClientsBulider,
 	extensionsFactory extensions.K8sGatewayExtensionsFactory,
 	pluginRegistryFactory func(opts registry.PluginOpts) plugins.PluginRegistryFactory) error {
 	ctx = contextutils.WithLogger(ctx, "k8s")
@@ -106,6 +107,8 @@ func StartGGv2(ctx context.Context,
 		kubeClient,
 		settingsGVR,
 		krt.WithName("GlooSettings"))
+
+	ucc := uccBuilder(ctx, pods)
 
 	settingsSingle := krt.NewSingleton(func(ctx krt.HandlerContext) *glookubev1.Settings {
 		s := krt.FetchOne(ctx, setting,
@@ -137,8 +140,10 @@ func StartGGv2(ctx context.Context,
 		GlooStatusReporter:   glooReporter,
 		Client:               kubeClient,
 		Pods:                 pods,
-		InitialSettings:      initialSettings,
-		Settings:             settingsSingle,
+		Ucc:                  ucc,
+
+		InitialSettings: initialSettings,
+		Settings:        settingsSingle,
 		// Useful for development purposes; not currently tied to any user-facing API
 		Dev: false,
 	})

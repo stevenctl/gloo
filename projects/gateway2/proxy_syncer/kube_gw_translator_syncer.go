@@ -87,7 +87,28 @@ func (s *ProxyTranslator) buildXdsSnapshot(
 	return xdsSnapshot, allReports, proxyReport
 }
 
-func (s *ProxyTranslator) syncXdsAndStatus(
+func (s *ProxyTranslator) syncXds(
+	ctx context.Context,
+	snap *xds.EnvoySnapshot,
+	proxyKey string,
+) {
+	ctx = contextutils.WithLogger(ctx, "kube-gateway-xds-syncer")
+	logger := contextutils.LoggerFrom(ctx)
+
+	// stringifying the snapshot may be an expensive operation, so we'd like to avoid building the large
+	// string if we're not even going to log it anyway
+	if contextutils.GetLogLevel() == zapcore.DebugLevel {
+		logger.Debugw(syncutil.StringifySnapshot(snap), "proxyKey", proxyKey)
+	}
+
+	// if the snapshot is not consistent, make it so
+	// TODO: me may need to copy this to not change krt cache.
+	snap.MakeConsistent()
+	s.xdsCache.SetSnapshot(proxyKey, snap)
+
+}
+
+func (s *ProxyTranslator) syncStatus(
 	ctx context.Context,
 	snap *xds.EnvoySnapshot,
 	proxyKey string,
@@ -103,16 +124,6 @@ func (s *ProxyTranslator) syncXdsAndStatus(
 		duration := stopwatch.Stop(ctx)
 		logger.Infof("end kube gw sync for proxy %s in %s", proxyKey, duration.String())
 	}()
-
-	// stringifying the snapshot may be an expensive operation, so we'd like to avoid building the large
-	// string if we're not even going to log it anyway
-	if contextutils.GetLogLevel() == zapcore.DebugLevel {
-		logger.Debugw(syncutil.StringifySnapshot(snap), "proxyKey", proxyKey)
-	}
-
-	// if the snapshot is not consistent, make it so
-	snap.MakeConsistent()
-	s.xdsCache.SetSnapshot(proxyKey, snap)
 
 	// TODO: only leaders should write status (https://github.com/solo-io/solo-projects/issues/6367)
 	logger.Debugf("gloo reports for proxy %s to be written: %v", proxyKey, reports)
