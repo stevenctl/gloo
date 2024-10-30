@@ -429,14 +429,13 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	logger.Infof("starting %s Proxy Syncer", s.controllerName)
 	// latestReport will be constantly updated to contain the merged status report for Kube Gateway status
 	// when timer ticks, we will use the state of the mergedReports at that point in time to sync the status to k8s
-	var latestReport reports.ReportMap
-	latestReport = reports.NewReportMap()
+	latestReportQueue := ggv2utils.NewAsyncQueue[reports.ReportMap]()
 	s.statusReport.Register(func(o krt.Event[report]) {
 		if o.Event == controllers.EventDelete {
 			// TODO: handle garbage collection (see: https://github.com/solo-io/solo-projects/issues/7086)
 			return
 		}
-		latestReport = o.Latest().ReportMap
+		latestReportQueue.Enqueue(o.Latest().ReportMap)
 	})
 	logger.Infof("waiting for cache to sync")
 
@@ -453,26 +452,14 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 	}
 
 	logger.Infof("caches warm!")
-	timer := time.NewTicker(time.Second * 1)
-	var needsProxyRecompute = false
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Debug("context done, stopping proxy syncer")
-			return nil
-		case <-timer.C:
-			if needsProxyRecompute {
-				needsProxyRecompute = false
-				s.proxyTrigger.TriggerRecomputation()
-			}
-			go func() {
-				s.syncGatewayStatus(ctx, latestReport)
-				s.syncRouteStatus(ctx, latestReport)
-			}()
-			// TODO: not use goroutine here?
-			go func() {
-				// TODO: make sure this can't happen in parallel with itself from previous iteration
-				// we probably will re-work status anyway..
+	go func() {
+		timer := time.NewTicker(time.Second * 1)
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Debug("context done, stopping proxy syncer")
+				return
+			case <-timer.C:
 				logger.Debug("syncing status plugins")
 				snaps := s.mostXdsSnapshots.List()
 				for _, snapWrap := range snaps {
@@ -491,16 +478,55 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 					proxiesWithReports = append(proxiesWithReports, snapWrap.proxyWithReport)
 					applyStatusPlugins(ctx, proxiesWithReports, snapWrap.pluginRegistry)
 				}
-				for _, snapWrap := range s.perclientSnapCollection.List() {
-					s.proxyTranslator.syncXds(ctx, snapWrap.snap, snapWrap.proxyKey)
-				}
-			}()
-		case <-s.inputs.genericEvent.Next():
-			// event from ctrl-rtime, signal that we need to recompute proxies on next tick
-			// this will not be necessary once we switch the "front side" of translation to krt
-			needsProxyRecompute = true
+			}
 		}
-	}
+	}()
+
+	s.perclientSnapCollection.RegisterBatch(func(o []krt.Event[xdsSnapWrapper], initialSync bool) {
+		for _, e := range o {
+			if e.Event != controllers.EventDelete {
+				snapWrap := e.Latest()
+				s.proxyTranslator.syncXds(ctx, snapWrap.snap, snapWrap.proxyKey)
+			} else {
+				s.proxyTranslator.xdsCache.ClearSnapshot(e.Latest().proxyKey)
+			}
+		}
+	}, true)
+
+	go func() {
+		timer := time.NewTicker(time.Second * 1)
+		var needsProxyRecompute = false
+		for {
+			select {
+			case <-ctx.Done():
+				logger.Debug("context done, stopping proxy recompute")
+				return
+			case <-timer.C:
+				if needsProxyRecompute {
+					needsProxyRecompute = false
+					s.proxyTrigger.TriggerRecomputation()
+				}
+			case <-s.inputs.genericEvent.Next():
+				// event from ctrl-rtime, signal that we need to recompute proxies on next tick
+				// this will not be necessary once we switch the "front side" of translation to krt
+				needsProxyRecompute = true
+			}
+		}
+
+	}()
+
+	go func() {
+		for {
+			latestReport, err := latestReportQueue.Dequeue(ctx)
+			if err != nil {
+				return
+			}
+			s.syncGatewayStatus(ctx, latestReport)
+			s.syncRouteStatus(ctx, latestReport)
+		}
+	}()
+	<-ctx.Done()
+	return nil
 }
 
 // buildProxy performs translation of a kube Gateway -> gloov1.Proxy (really a wrapper type)
