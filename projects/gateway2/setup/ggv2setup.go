@@ -23,6 +23,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/registry"
 	"github.com/solo-io/gloo/projects/gloo/pkg/syncer/setup"
+	"github.com/solo-io/gloo/projects/gloo/pkg/upstreams/kubernetes"
 	"github.com/solo-io/go-utils/contextutils"
 	"github.com/solo-io/solo-kit/pkg/api/shared"
 	"github.com/solo-io/solo-kit/pkg/api/v1/clients/kube/crd"
@@ -198,7 +199,11 @@ func (g *genericStatusReporter) WriteReports(ctx context.Context, resourceErrs r
 
 	for resource, report := range resourceErrsCopy {
 
-		// TODO: check if resource is an internal upstream. if so skip it..
+		// check if resource is an internal upstream. if so skip it..
+		if kubernetes.IsKubeUpstream(resource.GetMetadata().GetName()) {
+			continue
+		}
+
 		status := g.StatusFromReport(report, subresourceStatuses)
 		status = trimStatus(status)
 

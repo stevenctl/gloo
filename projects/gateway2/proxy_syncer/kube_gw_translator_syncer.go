@@ -10,7 +10,6 @@ import (
 
 	"github.com/solo-io/gloo/pkg/utils/settingsutil"
 	"github.com/solo-io/gloo/pkg/utils/statsutils"
-	"github.com/solo-io/gloo/pkg/utils/syncutil"
 	"github.com/solo-io/gloo/projects/gloo/pkg/api/grpc/validation"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	v1snap "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/gloosnapshot"
@@ -98,7 +97,8 @@ func (s *ProxyTranslator) syncXds(
 	// stringifying the snapshot may be an expensive operation, so we'd like to avoid building the large
 	// string if we're not even going to log it anyway
 	if contextutils.GetLogLevel() == zapcore.DebugLevel {
-		logger.Debugw(syncutil.StringifySnapshot(snap), "proxyKey", proxyKey)
+		logger.Debugw("syncing xds snapshot", "proxyKey", proxyKey)
+		//	logger.Debugw(syncutil.StringifySnapshot(snap), "proxyKey", proxyKey) // TODO: also spammy
 	}
 
 	// if the snapshot is not consistent, make it so
@@ -126,7 +126,8 @@ func (s *ProxyTranslator) syncStatus(
 	}()
 
 	// TODO: only leaders should write status (https://github.com/solo-io/solo-projects/issues/6367)
-	logger.Debugf("gloo reports for proxy %s to be written: %v", proxyKey, reports)
+	// 	logger.Debugf("gloo reports for proxy %s to be written: %v", proxyKey, reports) // QUESTION: this spams the logs. can we disable?
+	logger.Debugf("gloo reports for proxy %s to be written", proxyKey)
 	if err := s.glooReporter.WriteReports(ctx, reports, nil); err != nil {
 		logger.Errorf("Failed writing gloo reports for proxy %s: %v", proxyKey, err)
 		return err

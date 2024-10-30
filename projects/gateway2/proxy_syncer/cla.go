@@ -167,10 +167,10 @@ func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
 	}
 }
 
-func snapshotPerClient(l *zap.Logger, ucc krt.Collection[krtcollections.UniqlyConnectedClient],
+func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.UniqlyConnectedClient],
 	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints) krt.Collection[xdsSnapWrapper] {
 
-	xdsSnapshotsForUcc := krt.NewCollection(ucc, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
+	xdsSnapshotsForUcc := krt.NewCollection(uccCol, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
 		mostlySnaps := krt.Fetch(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
 		if len(mostlySnaps) != 1 {
 			return nil
