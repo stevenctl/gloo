@@ -198,6 +198,7 @@ func (g *genericStatusReporter) WriteReports(ctx context.Context, resourceErrs r
 
 	for resource, report := range resourceErrsCopy {
 
+		// TODO: check if resource is an internal upstream. if so skip it..
 		status := g.StatusFromReport(report, subresourceStatuses)
 		status = trimStatus(status)
 

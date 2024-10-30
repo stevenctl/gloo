@@ -351,8 +351,10 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		)
 		return xdsSnap
 	})
-	epPerClient := NewIndexedEndpoints(s.ucc, glooEndpoints, s.destRules)
-	s.perclientSnapCollection = snapshotPerClient(s.ucc, s.mostXdsSnapshots, epPerClient)
+
+	s.destRules = NewDestRuleIndex(s.istioClient)
+	epPerClient := NewIndexedEndpoints(logger.Desugar(), s.ucc, glooEndpoints, s.destRules)
+	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.ucc, s.mostXdsSnapshots, epPerClient)
 
 	// build ProxyList collection as glooProxies change
 	proxiesToReconcile := krt.NewSingleton(func(kctx krt.HandlerContext) *proxyList {
@@ -396,8 +398,6 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		}
 		return &report{merged}
 	})
-
-	s.destRules = NewDestRuleIndex(s.istioClient)
 
 	s.waitForSync = []cache.InformerSynced{
 		authConfigs.Synced().HasSynced,
@@ -492,8 +492,7 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 					applyStatusPlugins(ctx, proxiesWithReports, snapWrap.pluginRegistry)
 				}
 				for _, snapWrap := range s.perclientSnapCollection.List() {
-					s.proxyTranslator.syncStatus(ctx, snapWrap.snap, snapWrap.proxyKey, snapWrap.fullReports)
-
+					s.proxyTranslator.syncXds(ctx, snapWrap.snap, snapWrap.proxyKey)
 				}
 			}()
 		case <-s.inputs.genericEvent.Next():
@@ -659,8 +658,12 @@ func (s *ProxySyncer) translateProxy(
 	clustersVersion := envoySnap.Clusters.Version
 	envoySnap.Endpoints = envoycache.NewResources(fmt.Sprintf("%v-%v", clustersVersion, endpointsVersion), endpointsProto)
 
-	logger.Debugf("added endpoints to snapshot %s (%v listeners, %v clusters, %v routes, %v endpoints)",
-		proxy.ResourceName(), len(envoySnap.Listeners.Items), len(envoySnap.Clusters.Items), len(envoySnap.Routes.Items), len(envoySnap.Endpoints.Items))
+	logger.Debugw("added endpoints to snapshot", zap.String("proxyKey", proxy.ResourceName()),
+		zap.Stringer("Listeners", resourcesStringer(envoySnap.Listeners)),
+		zap.Stringer("Clusters", resourcesStringer(envoySnap.Clusters)),
+		zap.Stringer("Routes", resourcesStringer(envoySnap.Routes)),
+		zap.Stringer("Endpoints", resourcesStringer(envoySnap.Endpoints)),
+	)
 	out := xdsSnapWrapper{
 		snap:            envoySnap,
 		proxyKey:        proxy.ResourceName(),
@@ -863,4 +866,10 @@ func isGatewayStatusEqual(objA, objB *gwv1.GatewayStatus) bool {
 
 func isHTTPRouteStatusEqual(objA, objB *gwv1.HTTPRouteStatus) bool {
 	return cmp.Equal(objA, objB, opts)
+}
+
+type resourcesStringer envoycache.Resources
+
+func (r resourcesStringer) String() string {
+	return fmt.Sprintf("len: %d, version %s", len(r.Items), r.Version)
 }

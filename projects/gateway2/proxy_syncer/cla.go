@@ -9,6 +9,7 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 	envoycache "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/cache"
 	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/resource"
+	"go.uber.org/zap"
 	"istio.io/istio/pkg/kube/krt"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -97,7 +98,11 @@ type IndexedEndpoints struct {
 	index     krt.Index[string, uccWithEndpoints]
 }
 
-func NewIndexedEndpoints(uccs krt.Collection[krtcollections.UniqlyConnectedClient],
+func (ie *IndexedEndpoints) FetchEndpointsForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithEndpoints {
+	return krt.Fetch(kctx, ie.endpoints, krt.FilterIndex(ie.index, ucc.ResourceName()))
+}
+
+func NewIndexedEndpoints(logger *zap.Logger, uccs krt.Collection[krtcollections.UniqlyConnectedClient],
 	glooEndpoints krt.Collection[EndpointsForUpstream],
 	destinationRulesIndex DestinationRuleIndex) IndexedEndpoints {
 
@@ -105,7 +110,7 @@ func NewIndexedEndpoints(uccs krt.Collection[krtcollections.UniqlyConnectedClien
 		uccs := krt.Fetch(kctx, uccs)
 		uccWithEndpointsRet := make([]uccWithEndpoints, 0, len(uccs))
 		for _, ucc := range uccs {
-			cla := applyDestRulesForHostnames(kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
+			cla := applyDestRulesForHostnames(logger, kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
 			uccWithEndpointsRet = append(uccWithEndpointsRet, uccWithEndpoints{
 				Client:           ucc,
 				Endpoints:        resource.NewEnvoyResource(cla),
@@ -125,7 +130,7 @@ func NewIndexedEndpoints(uccs krt.Collection[krtcollections.UniqlyConnectedClien
 	}
 }
 
-func applyDestRulesForHostnames(kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, ep EndpointsForUpstream, c krtcollections.UniqlyConnectedClient) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, ep EndpointsForUpstream, c krtcollections.UniqlyConnectedClient) *envoy_config_endpoint_v3.ClusterLoadAssignment {
 	// host that would match the dest rule from the endpoints.
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
@@ -142,7 +147,7 @@ func applyDestRulesForHostnames(kctx krt.HandlerContext, destinationRulesIndex D
 		PriorityInfo: priorityInfo,
 	}
 
-	return prioritizeWithLbInfo(ep, lbInfo)
+	return prioritizeWithLbInfo(logger, ep, lbInfo)
 }
 
 func fromEndpoint(ep EndpointsForUpstream) string {
@@ -162,7 +167,7 @@ func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
 	}
 }
 
-func snapshotPerClient(ucc krt.Collection[krtcollections.UniqlyConnectedClient],
+func snapshotPerClient(l *zap.Logger, ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints) krt.Collection[xdsSnapWrapper] {
 
 	xdsSnapshotsForUcc := krt.NewCollection(ucc, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
@@ -171,7 +176,7 @@ func snapshotPerClient(ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 			return nil
 		}
 		mostlySnap := mostlySnaps[0]
-		endpointsForUcc := krt.Fetch(kctx, ie.endpoints, krt.FilterIndex(ie.index, ucc.ResourceName()))
+		endpointsForUcc := ie.FetchEndpointsForClient(kctx, ucc)
 		genericSnap := mostlySnap.snap
 		clustersVersion := mostlySnap.snap.Clusters.Version
 
@@ -190,6 +195,12 @@ func snapshotPerClient(ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 			Routes:    genericSnap.Routes,
 			Listeners: genericSnap.Listeners,
 		}
+		l.Debug("snapshotPerClient", zap.String("proxyKey", mostlySnap.proxyKey),
+			zap.Stringer("Listeners", resourcesStringer(mostlySnap.snap.Listeners)),
+			zap.Stringer("Clusters", resourcesStringer(mostlySnap.snap.Clusters)),
+			zap.Stringer("Routes", resourcesStringer(mostlySnap.snap.Routes)),
+			zap.Stringer("Endpoints", resourcesStringer(mostlySnap.snap.Endpoints)),
+		)
 
 		return &mostlySnap
 	})

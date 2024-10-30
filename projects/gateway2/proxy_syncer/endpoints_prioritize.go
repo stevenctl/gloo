@@ -8,6 +8,7 @@ import (
 	envoy_config_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
+	"go.uber.org/zap"
 	"istio.io/api/networking/v1alpha3"
 	"istio.io/istio/pkg/slices"
 )
@@ -25,9 +26,6 @@ type LoadBalancingInfo struct {
 }
 
 type PriorityInfo struct {
-
-	// dest rule info:
-	//	Failover []*LocalityLoadBalancerSetting_Failover
 	FailoverPriority *Prioritizer
 	Failover         []*v1alpha3.LocalityLoadBalancerSetting_Failover
 }
@@ -83,10 +81,11 @@ func priorityLabelOverrides(labels []string) ([]string, map[string]string) {
 	return priorityLabels, overriddenValueByLabel
 }
 
-func prioritizeWithLbInfo(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
 	cla := &envoy_config_endpoint_v3.ClusterLoadAssignment{
 		ClusterName: ep.clusterName,
 	}
+	totalEndpoints := 0
 	for loc, eps := range ep.LbEps {
 		var l *envoy_config_core_v3.Locality
 		if loc != (krtcollections.PodLocality{}) {
@@ -102,10 +101,11 @@ func prioritizeWithLbInfo(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *en
 			ep.Locality = l
 		}
 
+		totalEndpoints += len(endpoints)
 		cla.Endpoints = append(cla.Endpoints, endpoints...)
 	}
 
-	if lbInfo.PriorityInfo.FailoverPriority == nil {
+	if lbInfo.PriorityInfo != nil && lbInfo.PriorityInfo.FailoverPriority == nil {
 		// if no priorities, fallback to failover
 		if len(lbInfo.PriorityInfo.Failover) != 0 {
 			proxyLocality := envoy_config_core_v3.Locality{
@@ -117,6 +117,8 @@ func prioritizeWithLbInfo(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *en
 		}
 	}
 
+	logger.Debug("created cla", zap.String("cluster", cla.ClusterName), zap.Int("numAddresses", totalEndpoints))
+
 	// in theory we want to run endpoint plugins here.
 	// we only have one endpoint plugin, and it's not clear if it is in use. so
 	// consider deprecating the functionality. it's not easy to do as with krt we no longer have gloo 'Endpoint' objects
@@ -124,12 +126,12 @@ func prioritizeWithLbInfo(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *en
 }
 
 func getEndpoints(eps []EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
-	if lbinfo.PriorityInfo.FailoverPriority == nil {
-		return []*envoy_config_endpoint_v3.LocalityLbEndpoints{{
-			LbEndpoints: slices.Map(eps, func(e EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
-		}}
+	if lbinfo.PriorityInfo != nil && lbinfo.PriorityInfo.FailoverPriority != nil {
+		return applyFailoverPriorityPerLocality(eps, lbinfo)
 	}
-	return applyFailoverPriorityPerLocality(eps, lbinfo)
+	return []*envoy_config_endpoint_v3.LocalityLbEndpoints{{
+		LbEndpoints: slices.Map(eps, func(e EndpointWithMd) *envoy_config_endpoint_v3.LbEndpoint { return e.LbEndpoint }),
+	}}
 }
 
 func applyFailoverPriorityPerLocality(

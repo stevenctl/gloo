@@ -1,6 +1,7 @@
 package proxy_syncer
 
 import (
+	"fmt"
 	"slices"
 
 	"google.golang.org/protobuf/proto"
@@ -15,6 +16,13 @@ import (
 type NsWithHostname struct {
 	Ns       string
 	Hostname string
+}
+
+var _ fmt.Stringer = NsWithHostname{}
+
+// needed as index key..
+func (n NsWithHostname) String() string {
+	return fmt.Sprintf("%s/%s", n.Ns, n.Hostname)
 }
 
 type DestinationRuleIndex struct {

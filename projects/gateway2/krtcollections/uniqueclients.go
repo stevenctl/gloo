@@ -111,7 +111,7 @@ func buildCollection(callbacks *callbacks) UniquelyConnectedClientsBulider {
 
 				return col.getClients()
 			},
-			krt.WithName("EcsServices"),
+			krt.WithName("UniqueConnectedClients"),
 		)
 	}
 }
