@@ -3,8 +3,6 @@ package proxy_syncer
 import (
 	"fmt"
 
-	"slices"
-
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_config_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
@@ -81,12 +79,13 @@ func prioritize(ep EndpointsForUpstream) *envoy_config_endpoint_v3.ClusterLoadAs
 
 type uccWithEndpoints struct {
 	Client           krtcollections.UniqlyConnectedClient
-	Endpoints        []envoycache.Resource
+	Endpoints        envoycache.Resource
 	EndpointsVersion uint64
+	endpointsName    string
 }
 
 func (c uccWithEndpoints) ResourceName() string {
-	return c.Client.ResourceName()
+	return fmt.Sprintf("%s/%s", c.Client.ResourceName(), c.endpointsName)
 }
 
 func (c uccWithEndpoints) Equals(in uccWithEndpoints) bool {
@@ -102,20 +101,19 @@ func NewIndexedEndpoints(uccs krt.Collection[krtcollections.UniqlyConnectedClien
 	glooEndpoints krt.Collection[EndpointsForUpstream],
 	destinationRulesIndex DestinationRuleIndex) IndexedEndpoints {
 
-	clas := krt.NewCollection(uccs, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *uccWithEndpoints {
-		endpoints := krt.Fetch(kctx, glooEndpoints)
-		var endpointsProto []envoycache.Resource
-		var endpointsVersion uint64
-		for _, ep := range endpoints {
+	clas := krt.NewManyCollection(glooEndpoints, func(kctx krt.HandlerContext, ep EndpointsForUpstream) []uccWithEndpoints {
+		uccs := krt.Fetch(kctx, uccs)
+		uccWithEndpointsRet := make([]uccWithEndpoints, 0, len(uccs))
+		for _, ucc := range uccs {
 			cla := applyDestRulesForHostnames(kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
-			endpointsProto = append(endpointsProto, resource.NewEnvoyResource(cla))
-			endpointsVersion ^= ep.lbEpsEqualityHash
+			uccWithEndpointsRet = append(uccWithEndpointsRet, uccWithEndpoints{
+				Client:           ucc,
+				Endpoints:        resource.NewEnvoyResource(cla),
+				EndpointsVersion: ep.lbEpsEqualityHash,
+				endpointsName:    ep.ResourceName(),
+			})
 		}
-		return &uccWithEndpoints{
-			Client:           ucc,
-			Endpoints:        endpointsProto,
-			EndpointsVersion: endpointsVersion,
-		}
+		return uccWithEndpointsRet
 	})
 	idx := krt.NewIndex(clas, func(ucc uccWithEndpoints) []string {
 		return []string{ucc.Client.ResourceName()}
@@ -133,16 +131,18 @@ func applyDestRulesForHostnames(kctx krt.HandlerContext, destinationRulesIndex D
 	// get the lb info from the dest rules and call prioritize
 
 	hostname := fromEndpoint(ep)
-	destrules := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, hostname, c.Labels)
-
-	priorityInfo := getDestruleFor(destrules)
+	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, hostname, c.Labels)
+	var priorityInfo *PriorityInfo
+	if destrule != nil {
+		priorityInfo = getDestruleFor(*destrule)
+	}
 	lbInfo := LoadBalancingInfo{
 		PodLabels:    c.Labels,
 		PodLocality:  c.Locality,
 		PriorityInfo: priorityInfo,
 	}
 
-	return prioritize2(ep, lbInfo)
+	return prioritizeWithLbInfo(ep, lbInfo)
 }
 
 func fromEndpoint(ep EndpointsForUpstream) string {
@@ -151,13 +151,8 @@ func fromEndpoint(ep EndpointsForUpstream) string {
 	return fmt.Sprintf("%s.%s.svc.cluster.local", ep.UpstreamRef.Name, ep.UpstreamRef.Namespace)
 }
 
-func getDestruleFor(destrules []DestinationRuleWrapper) *PriorityInfo {
-
-	// use oldest. TODO -  we need to merge them.
-	oldestDestRule := slices.MinFunc(destrules, func(i DestinationRuleWrapper, j DestinationRuleWrapper) int {
-		return i.CreationTimestamp.Time.Compare(j.CreationTimestamp.Time)
-	})
-	localityLb := oldestDestRule.Spec.GetTrafficPolicy().GetLoadBalancer().GetLocalityLbSetting()
+func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
+	localityLb := destrules.Spec.GetTrafficPolicy().GetLoadBalancer().GetLocalityLbSetting()
 	if localityLb == nil {
 		return nil
 	}
@@ -170,13 +165,8 @@ func getDestruleFor(destrules []DestinationRuleWrapper) *PriorityInfo {
 func snapshotPerClient(ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints) krt.Collection[xdsSnapWrapper] {
 
-	mostXdsSnapshotsIndex := krt.NewIndex(mostXdsSnapshots, func(snap xdsSnapWrapper) []string {
-		// TODO: make sure this matches the gateway name/namespace. or whatever we can correlate to envoy xds node id.
-		return []string{snap.proxyKey}
-	})
-
 	xdsSnapshotsForUcc := krt.NewCollection(ucc, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
-		mostlySnaps := krt.Fetch(kctx, mostXdsSnapshots, krt.FilterIndex(mostXdsSnapshotsIndex, ucc.Role))
+		mostlySnaps := krt.Fetch(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
 		if len(mostlySnaps) != 1 {
 			return nil
 		}
@@ -185,12 +175,13 @@ func snapshotPerClient(ucc krt.Collection[krtcollections.UniqlyConnectedClient],
 		genericSnap := mostlySnap.snap
 		clustersVersion := mostlySnap.snap.Clusters.Version
 
-		if len(endpointsForUcc) != 1 {
-			return nil
+		endpointsProto := make([]envoycache.Resource, 0, len(endpointsForUcc))
+		var endpointsVersion uint64
+
+		for _, ep := range endpointsForUcc {
+			endpointsProto = append(endpointsProto, ep.Endpoints)
+			endpointsVersion ^= ep.EndpointsVersion
 		}
-		endpoints := endpointsForUcc[0]
-		endpointsProto := endpoints.Endpoints
-		endpointsVersion := endpoints.EndpointsVersion
 
 		mostlySnap.proxyKey = ucc.ResourceName()
 		mostlySnap.snap = &xds.EnvoySnapshot{

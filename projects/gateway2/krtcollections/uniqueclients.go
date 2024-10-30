@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -16,7 +15,6 @@ import (
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 	xdsserver "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/server"
 	"google.golang.org/protobuf/types/known/structpb"
-	"istio.io/istio/pkg/kube/controllers"
 	"istio.io/istio/pkg/kube/krt"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -71,14 +69,13 @@ func newUniqlyConnectedClient(node *envoy_config_core_v3.Node, ns string, labels
 
 type callbacksCollection struct {
 	ctx              context.Context
+	augmentedPods    krt.Collection[LocalityPod]
 	clients          map[int64]ConnectedClient
 	uniqClientsCount map[string]uint64
 	uniqClients      map[string]UniqlyConnectedClient
-	fanoutChan       chan krt.Event[UniqlyConnectedClient]
 	stateLock        sync.RWMutex
 
-	eventHandlers handlers[UniqlyConnectedClient]
-	augmentedPods krt.Collection[LocalityPod]
+	trigger *krt.RecomputeTrigger
 }
 
 type callbacks struct {
@@ -97,31 +94,29 @@ func NewUniquelyConnectedClients() (xdsserver.Callbacks, UniquelyConnectedClient
 
 func buildCollection(callbacks *callbacks) UniquelyConnectedClientsBulider {
 	return func(ctx context.Context, augmentedPods krt.Collection[LocalityPod]) krt.Collection[UniqlyConnectedClient] {
-		cb := &callbacksCollection{
+		trigger := krt.NewRecomputeTrigger(true)
+		col := &callbacksCollection{
 			ctx:              ctx,
+			augmentedPods:    augmentedPods,
 			clients:          make(map[int64]ConnectedClient),
 			uniqClientsCount: make(map[string]uint64),
 			uniqClients:      make(map[string]UniqlyConnectedClient),
-			fanoutChan:       make(chan krt.Event[UniqlyConnectedClient], 100),
-			augmentedPods:    augmentedPods,
+			trigger:          trigger,
 		}
-		go func() {
-			for {
-				select {
-				case <-ctx.Done():
-					return
-				case event := <-cb.fanoutChan:
-					cb.eventHandlers.Notify(event)
-				}
-			}
-		}()
-		callbacks.collection.Store(cb)
-		return cb
+
+		callbacks.collection.Store(col)
+		return krt.NewManyFromNothing(
+			func(ctx krt.HandlerContext) []UniqlyConnectedClient {
+				trigger.MarkDependant(ctx)
+
+				return col.getClients()
+			},
+			krt.WithName("EcsServices"),
+		)
 	}
 }
 
 var _ xdsserver.Callbacks = new(callbacks)
-var _ krt.Collection[UniqlyConnectedClient] = new(callbacksCollection)
 
 // OnStreamOpen is called once an xDS stream is open with a stream ID and the type URL (or "" for ADS).
 // Returning an error will end processing and close the stream. OnStreamClosed will still be called.
@@ -135,13 +130,13 @@ func (x *callbacks) OnStreamClosed(sid int64) {
 	if c == nil {
 		return
 	}
-	c.OnStreamClosed(sid)
+	c.streamClosed(sid)
 }
 
-func (x *callbacksCollection) OnStreamClosed(sid int64) {
+func (x *callbacksCollection) streamClosed(sid int64) {
 	ucc := x.del(sid)
 	if ucc != nil {
-		x.Notify(krt.Event[UniqlyConnectedClient]{Old: ucc, Event: controllers.EventDelete})
+		x.trigger.TriggerRecomputation()
 	}
 }
 
@@ -192,18 +187,6 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 	return nil, nil
 }
 
-func (x *callbacksCollection) Notify(e krt.Event[UniqlyConnectedClient]) {
-	for {
-		// note: do not use a default block here, we want to block if the channel is full, as otherwise we will have inconsistent state in krt.
-		select {
-		case x.fanoutChan <- e:
-			return
-		case <-x.ctx.Done():
-			return
-		}
-	}
-}
-
 // OnStreamRequest is called once a request is received on a stream.
 // Returning an error will end processing and close the stream. OnStreamClosed will still be called.
 func (x *callbacks) OnStreamRequest(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) error {
@@ -216,10 +199,10 @@ func (x *callbacks) OnStreamRequest(sid int64, r *envoy_service_discovery_v3.Dis
 	if c == nil {
 		return errors.New("ggv2 not initialized")
 	}
-	return c.OnStreamRequest(sid, r)
+	return c.newStream(sid, r)
 }
 
-func (x *callbacksCollection) OnStreamRequest(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) error {
+func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) error {
 	ucc, err := x.add(sid, r)
 	if err != nil {
 		return err
@@ -234,12 +217,15 @@ func (x *callbacksCollection) OnStreamRequest(sid int64, r *envoy_service_discov
 		}
 		role := nodeMd.Fields[xds.RoleKey].GetStringValue()
 		if role != "" {
+			// NOTE: this changes the role to include the unique client. This is coupled
+			// with how the snapshot is inserted to the cache for the proxy - it needs to be done with
+			// the unique client resource name as well.
 			nodeMd.Fields[xds.RoleKey] = structpb.NewStringValue(ucc.resourceName)
 			r.Node.Metadata = nodeMd
 		} else {
 			// TODO: log warning
 		}
-		x.Notify(krt.Event[UniqlyConnectedClient]{New: ucc, Event: controllers.EventAdd})
+		x.trigger.TriggerRecomputation()
 	}
 	return nil
 }
@@ -266,37 +252,6 @@ func (x *callbacks) OnFetchRequest(_ context.Context, _ *envoy_service_discovery
 
 // OnFetchResponse is called immediately prior to sending a response.
 func (x *callbacks) OnFetchResponse(_ *envoy_service_discovery_v3.DiscoveryRequest, _ *envoy_service_discovery_v3.DiscoveryResponse) {
-}
-
-func (x *callbacksCollection) Register(f func(o krt.Event[UniqlyConnectedClient])) krt.Syncer {
-	return x.RegisterBatch(func(events []krt.Event[UniqlyConnectedClient], initialSync bool) {
-		for _, o := range events {
-			f(o)
-		}
-	}, true)
-}
-
-func (x *callbacksCollection) RegisterBatch(f func(o []krt.Event[UniqlyConnectedClient], initialSync bool), runExistingState bool) krt.Syncer {
-	if runExistingState {
-		f(nil, true)
-	}
-	// notify under lock to make sure that no regular events fire during the initial sync.
-	x.eventHandlers.mu.Lock()
-	defer x.eventHandlers.mu.Unlock()
-	x.eventHandlers.insertLocked(f)
-	if runExistingState {
-		var events []krt.Event[UniqlyConnectedClient]
-		for _, v := range x.getClients() {
-			events = append(events, krt.Event[UniqlyConnectedClient]{
-				New:   &v,
-				Event: controllers.EventAdd,
-			})
-
-		}
-		f(events, true)
-	}
-
-	return &simpleSyncer{}
 }
 
 func (x *callbacksCollection) Synced() krt.Syncer {
@@ -328,34 +283,6 @@ func (s *simpleSyncer) WaitUntilSynced(stop <-chan struct{}) bool {
 
 func (s *simpleSyncer) HasSynced() bool {
 	return true
-}
-
-type handlers[O any] struct {
-	mu sync.RWMutex
-	h  []func(o []krt.Event[O], initialSync bool)
-}
-
-func (o *handlers[O]) Insert(f func(o []krt.Event[O], initialSync bool)) {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	o.h = append(o.h, f)
-}
-func (o *handlers[O]) insertLocked(f func(o []krt.Event[O], initialSync bool)) {
-	o.h = append(o.h, f)
-}
-
-func (o *handlers[O]) Get() []func(o []krt.Event[O], initialSync bool) {
-	o.mu.RLock()
-	defer o.mu.RUnlock()
-	return slices.Clone(o.h)
-}
-
-func (o *handlers[O]) Notify(e krt.Event[O]) {
-	cb := o.Get()
-	for _, f := range cb {
-		events := [1]krt.Event[O]{e}
-		f(events[:], false)
-	}
 }
 
 func getRef(node *envoy_config_core_v3.Node) types.NamespacedName {

@@ -83,7 +83,7 @@ func priorityLabelOverrides(labels []string) ([]string, map[string]string) {
 	return priorityLabels, overriddenValueByLabel
 }
 
-func prioritize2(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func prioritizeWithLbInfo(ep EndpointsForUpstream, lbInfo LoadBalancingInfo) *envoy_config_endpoint_v3.ClusterLoadAssignment {
 	cla := &envoy_config_endpoint_v3.ClusterLoadAssignment{
 		ClusterName: ep.clusterName,
 	}

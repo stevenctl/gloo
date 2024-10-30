@@ -1,6 +1,9 @@
 package proxy_syncer
 
 import (
+	"slices"
+
+	"google.golang.org/protobuf/proto"
 	networkingclient "istio.io/client-go/pkg/apis/networking/v1"
 	"istio.io/istio/pkg/config/schema/gvr"
 	"istio.io/istio/pkg/kube"
@@ -22,8 +25,20 @@ type DestinationRuleWrapper struct {
 	*networkingclient.DestinationRule
 }
 
+// important for FilterSelects below
 func (s DestinationRuleWrapper) GetLabelSelector() map[string]string {
 	return s.Spec.WorkloadSelector.MatchLabels
+}
+
+func (c DestinationRuleWrapper) ResourceName() string {
+	return krt.Named{Namespace: c.Namespace, Name: c.Name}.ResourceName()
+}
+
+var _ krt.Equaler[DestinationRuleWrapper] = new(DestinationRuleWrapper)
+
+func (c DestinationRuleWrapper) Equals(k DestinationRuleWrapper) bool {
+	// we only care if the spec changed..
+	return proto.Equal(&c.Spec, &k.Spec)
 }
 
 func NewDestRuleIndex(istioClient kube.Client) DestinationRuleIndex {
@@ -48,11 +63,18 @@ func newDestruleIndex(destRuleCollection krt.Collection[DestinationRuleWrapper])
 	return idx
 }
 
-func (d *DestinationRuleIndex) FetchDestRulesFor(kctx krt.HandlerContext, proxyNs string, hostname string, podLabels map[string]string) []DestinationRuleWrapper {
+func (d *DestinationRuleIndex) FetchDestRulesFor(kctx krt.HandlerContext, proxyNs string, hostname string, podLabels map[string]string) *DestinationRuleWrapper {
 	key := NsWithHostname{
 		Ns:       proxyNs,
 		Hostname: hostname,
 	}
-	return krt.Fetch(kctx, d.Destrules, krt.FilterIndex(d.ByHostname, key), krt.FilterSelects(podLabels))
-
+	destrules := krt.Fetch(kctx, d.Destrules, krt.FilterIndex(d.ByHostname, key), krt.FilterSelects(podLabels))
+	if len(destrules) == 0 {
+		return nil
+	}
+	// use oldest. TODO -  we need to merge them.
+	oldestDestRule := slices.MinFunc(destrules, func(i DestinationRuleWrapper, j DestinationRuleWrapper) int {
+		return i.CreationTimestamp.Time.Compare(j.CreationTimestamp.Time)
+	})
+	return &oldestDestRule
 }
