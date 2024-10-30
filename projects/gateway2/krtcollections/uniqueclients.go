@@ -13,7 +13,9 @@ import (
 	envoy_service_discovery_v3 "github.com/envoyproxy/go-control-plane/envoy/service/discovery/v3"
 	"github.com/solo-io/gloo/projects/gateway2/utils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
+	"github.com/solo-io/go-utils/contextutils"
 	xdsserver "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/server"
+	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
 	"istio.io/istio/pkg/kube/krt"
 	"k8s.io/apimachinery/pkg/types"
@@ -68,7 +70,7 @@ func newUniqlyConnectedClient(node *envoy_config_core_v3.Node, ns string, labels
 }
 
 type callbacksCollection struct {
-	ctx              context.Context
+	logger           *zap.Logger
 	augmentedPods    krt.Collection[LocalityPod]
 	clients          map[int64]ConnectedClient
 	uniqClientsCount map[string]uint64
@@ -96,7 +98,7 @@ func buildCollection(callbacks *callbacks) UniquelyConnectedClientsBulider {
 	return func(ctx context.Context, augmentedPods krt.Collection[LocalityPod]) krt.Collection[UniqlyConnectedClient] {
 		trigger := krt.NewRecomputeTrigger(true)
 		col := &callbacksCollection{
-			ctx:              ctx,
+			logger:           contextutils.LoggerFrom(ctx).Desugar(),
 			augmentedPods:    augmentedPods,
 			clients:          make(map[int64]ConnectedClient),
 			uniqClientsCount: make(map[string]uint64),
@@ -160,7 +162,7 @@ func (x *callbacksCollection) del(sid int64) *UniqlyConnectedClient {
 	return nil
 }
 
-func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) (*UniqlyConnectedClient, error) {
+func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) (string, error) {
 
 	var pod *LocalityPod
 	if r.Node != nil {
@@ -171,20 +173,24 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 
 	x.stateLock.Lock()
 	defer x.stateLock.Unlock()
-	if _, ok := x.clients[sid]; !ok {
+	c, ok := x.clients[sid]
+	if !ok {
 		if pod == nil {
 			// error if we can't get the pod
-			return nil, fmt.Errorf("pod not found for node %v", r.Node)
+			return "", fmt.Errorf("pod not found for node %v", r.Node)
 		}
 		// TODO: modify request to include the label that are relevant for the client?
 		ucc := newUniqlyConnectedClient(r.Node, pod.Namespace, pod.AugmentedLabels, pod.Locality)
-		c := newConnectedClient(ucc.resourceName)
+		c = newConnectedClient(ucc.resourceName)
 		x.clients[sid] = c
-		x.uniqClientsCount[ucc.resourceName] += 1
-		x.uniqClients[ucc.resourceName] = ucc
-		return &ucc, nil
+		currentUnique := x.uniqClientsCount[ucc.resourceName]
+		x.uniqClientsCount[ucc.resourceName] = currentUnique + 1
+		if currentUnique == 0 {
+			x.uniqClients[ucc.resourceName] = ucc
+		}
 	}
-	return nil, nil
+	return c.uniqueClientName, nil
+
 }
 
 // OnStreamRequest is called once a request is received on a stream.
@@ -207,7 +213,7 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 	if err != nil {
 		return err
 	}
-	if ucc != nil {
+	if ucc != "" {
 		nodeMd := r.GetNode().GetMetadata()
 		if nodeMd == nil {
 			nodeMd = &structpb.Struct{}
@@ -215,16 +221,14 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 		if nodeMd.Fields == nil {
 			nodeMd.Fields = map[string]*structpb.Value{}
 		}
-		role := nodeMd.Fields[xds.RoleKey].GetStringValue()
-		if role != "" {
-			// NOTE: this changes the role to include the unique client. This is coupled
-			// with how the snapshot is inserted to the cache for the proxy - it needs to be done with
-			// the unique client resource name as well.
-			nodeMd.Fields[xds.RoleKey] = structpb.NewStringValue(ucc.resourceName)
-			r.Node.Metadata = nodeMd
-		} else {
-			// TODO: log warning
-		}
+
+		x.logger.Debug("augmenting role in node metadata", zap.String("resourceName", ucc))
+		// NOTE: this changes the role to include the unique client. This is coupled
+		// with how the snapshot is inserted to the cache for the proxy - it needs to be done with
+		// the unique client resource name as well.
+		nodeMd.Fields[xds.RoleKey] = structpb.NewStringValue(ucc)
+		r.Node.Metadata = nodeMd
+
 		x.trigger.TriggerRecomputation()
 	}
 	return nil
