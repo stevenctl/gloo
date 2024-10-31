@@ -50,7 +50,18 @@ func (t *translatorInstance) computeClusters(
 
 	clusterToUpstreamMap := make(map[*envoy_config_cluster_v3.Cluster]*v1.Upstream)
 	for _, upstream := range upstreams {
-		cluster := t.computeCluster(params, upstream, upstreamRefKeyToEndpoints, reports, shouldEnforceNamespaceMatch)
+		eds := false
+		if eps, ok := upstreamRefKeyToEndpoints[upstream.GetMetadata().Ref().Key()]; ok && len(eps) > 0 {
+			eds = true
+		}
+		cluster, errs := t.computeCluster(params, upstream, eds)
+		for _, err := range errs {
+			if errors.Is(err, &Warning{}) {
+				reports.AddWarning(upstream, err.Error())
+			} else {
+				reports.AddError(upstream, err)
+			}
+		}
 		clusterToUpstreamMap[cluster] = upstream
 		clusters = append(clusters, cluster)
 	}
@@ -58,49 +69,67 @@ func (t *translatorInstance) computeClusters(
 	return clusters, clusterToUpstreamMap
 }
 
+func (t *translatorInstance) TranslateCluster(
+	params plugins.Params,
+	upstream *v1.Upstream,
+	eds bool,
+) (*envoy_config_cluster_v3.Cluster, []error) {
+	t.lock.Lock()
+	defer t.lock.Unlock()
+	c, err := t.computeCluster(params, upstream, eds)
+	if c != nil && c.GetEdsClusterConfig() != nil {
+		endpointClusterName, err2 := GetEndpointClusterName(c.GetName(), upstream)
+		if err2 == nil {
+			c.GetEdsClusterConfig().ServiceName = endpointClusterName
+		}
+	}
+	return c, err
+}
+
 func (t *translatorInstance) computeCluster(
 	params plugins.Params,
 	upstream *v1.Upstream,
-	upstreamRefKeyToEndpoints map[string][]*v1.Endpoint,
-	reports reporter.ResourceReports,
-	shouldEnforceNamespaceMatch bool,
-) *envoy_config_cluster_v3.Cluster {
+	eds bool,
+) (*envoy_config_cluster_v3.Cluster, []error) {
 	logger := contextutils.LoggerFrom(params.Ctx)
 	params.Ctx = contextutils.WithLogger(params.Ctx, upstream.GetMetadata().GetName())
-	out := t.initializeCluster(upstream, upstreamRefKeyToEndpoints, reports, &params.Snapshot.Secrets, shouldEnforceNamespaceMatch)
+	out, errs := t.initializeCluster(upstream, eds, &params.Snapshot.Secrets)
 
 	for _, plugin := range t.pluginRegistry.GetUpstreamPlugins() {
 		if err := plugin.ProcessUpstream(params, upstream, out); err != nil {
 			logger.Debug("Error processing upstream", zap.String("upstream", upstream.GetMetadata().Ref().String()), zap.Error(err), zap.String("plugin", plugin.Name()))
-			reports.AddError(upstream, err)
+			errs = append(errs, err)
 		}
 	}
 	if err := validateCluster(out); err != nil {
 		logger.Debug("Error validating cluster ", zap.String("upstream", upstream.GetMetadata().Ref().String()), zap.Error(err))
-		reports.AddError(upstream, eris.Wrap(err, "cluster was configured improperly by one or more plugins"))
+		errs = append(errs, eris.Wrap(err, "cluster was configured improperly by one or more plugins"))
 	}
-	return out
+	return out, errs
 }
 
 func (t *translatorInstance) initializeCluster(
 	upstream *v1.Upstream,
-	upstreamRefKeyToEndpoints map[string][]*v1.Endpoint,
-	reports reporter.ResourceReports,
+	eds bool,
 	secrets *v1.SecretList,
-	shouldEnforceNamespaceMatch bool,
-) *envoy_config_cluster_v3.Cluster {
-	hcConfig, err := createHealthCheckConfig(upstream, secrets, shouldEnforceNamespaceMatch)
+) (*envoy_config_cluster_v3.Cluster, []error) {
+	var errorList []error
+	hcConfig, err := createHealthCheckConfig(upstream, secrets, t.shouldEnforceNamespaceMatch)
 	if err != nil {
-		reports.AddError(upstream, err)
+		errorList = append(errorList, err)
 	}
 	detectCfg, err := createOutlierDetectionConfig(upstream)
 	if err != nil {
-		reports.AddError(upstream, err)
+		errorList = append(errorList, err)
 	}
 
 	preconnect, err := getPreconnectPolicy(upstream.GetPreconnectPolicy())
 	if err != nil {
-		reports.AddError(upstream, err)
+		errorList = append(errorList, err)
+	}
+	dnsRefreshRate, err := getDnsRefreshRate(upstream)
+	if err != nil {
+		errorList = append(errorList, err)
 	}
 
 	circuitBreakers := t.settings.GetGloo().GetCircuitBreakers()
@@ -118,7 +147,7 @@ func (t *translatorInstance) initializeCluster(
 		Http2ProtocolOptions:      getHttp2options(upstream),
 		IgnoreHealthOnHostRemoval: upstream.GetIgnoreHealthOnHostRemoval().GetValue(),
 		RespectDnsTtl:             upstream.GetRespectDnsTtl().GetValue(),
-		DnsRefreshRate:            getDnsRefreshRate(upstream, reports),
+		DnsRefreshRate:            dnsRefreshRate,
 		PreconnectPolicy:          preconnect,
 	}
 
@@ -130,9 +159,11 @@ func (t *translatorInstance) initializeCluster(
 			// warning instead of error to the report.
 			if t.settings.GetGateway().GetValidation().GetWarnMissingTlsSecret().GetValue() &&
 				errors.Is(err, utils.SslSecretNotFoundError) {
-				reports.AddWarning(upstream, err.Error())
+				errorList = append(errorList, &Warning{
+					Message: err,
+				})
 			} else {
-				reports.AddError(upstream, err)
+				errorList = append(errorList, err)
 			}
 		} else {
 			typedConfig, err := utils.MessageToAny(cfg)
@@ -155,17 +186,17 @@ func (t *translatorInstance) initializeCluster(
 
 		tp, err := upstream_proxy_protocol.WrapWithPProtocol(out.GetTransportSocket(), upstream.GetProxyProtocolVersion().GetValue())
 		if err != nil {
-			reports.AddError(upstream, err)
+			errorList = append(errorList, err)
 		} else {
 			out.TransportSocket = tp
 		}
 	}
 
 	// set Type = EDS if we have endpoints for the upstream
-	if eps, ok := upstreamRefKeyToEndpoints[upstream.GetMetadata().Ref().Key()]; ok && len(eps) > 0 {
+	if eds {
 		xds.SetEdsOnCluster(out, t.settings)
 	}
-	return out
+	return out, errorList
 }
 
 var (
@@ -360,18 +391,19 @@ func getHttp2options(us *v1.Upstream) *envoy_config_core_v3.Http2ProtocolOptions
 // - defined and valid: returns the duration
 // - defined and invalid: adds a warning and returns nil
 // - undefined: returns nil
-func getDnsRefreshRate(us *v1.Upstream, reports reporter.ResourceReports) *duration.Duration {
+func getDnsRefreshRate(us *v1.Upstream) (*duration.Duration, error) {
 	refreshRate := us.GetDnsRefreshRate()
 	if refreshRate == nil {
-		return nil
+		return nil, nil
 	}
 
 	if refreshRate.AsDuration() < minimumDnsRefreshRate.AsDuration() {
-		reports.AddWarning(us, fmt.Sprintf("dnsRefreshRate was set below minimum requirement (%s), ignoring configuration", minimumDnsRefreshRate))
-		return nil
+		return nil, &Warning{
+			Message: fmt.Errorf("dnsRefreshRate was set below minimum requirement (%s), ignoring configuration", minimumDnsRefreshRate),
+		}
 	}
 
-	return refreshRate
+	return refreshRate, nil
 }
 
 // Validates routes that point to the current AWS lambda upstream

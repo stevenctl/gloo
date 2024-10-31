@@ -126,7 +126,6 @@ func (s *ProxyTranslator) syncStatus(
 	}()
 
 	// TODO: only leaders should write status (https://github.com/solo-io/solo-projects/issues/6367)
-	// 	logger.Debugf("gloo reports for proxy %s to be written: %v", proxyKey, reports) // QUESTION: this spams the logs. can we disable?
 	logger.Debugf("gloo reports for proxy %s to be written", proxyKey)
 	if err := s.glooReporter.WriteReports(ctx, reports, nil); err != nil {
 		logger.Errorf("Failed writing gloo reports for proxy %s: %v", proxyKey, err)

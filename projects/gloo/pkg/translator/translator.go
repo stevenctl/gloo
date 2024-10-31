@@ -43,19 +43,29 @@ type Translator interface {
 		params plugins.Params,
 		proxy *v1.Proxy,
 	) (envoycache.Snapshot, reporter.ResourceReports, *validationapi.ProxyReport)
+	TranslateCluster(
+		params plugins.Params,
+		upstream *v1.Upstream,
+		eds bool,
+	) (*envoy_config_cluster_v3.Cluster, []error)
 }
 
 var (
 	_ Translator = new(translatorInstance)
 )
 
+func isGwApiProxy(proxy *v1.Proxy) bool {
+	return proxy.GetMetadata().GetLabels()[utils.ProxyTypeKey] == utils.GatewayApiProxyValue
+}
+
 // translatorInstance is the implementation for a Translator used during Gloo translation
 type translatorInstance struct {
-	lock                      sync.Mutex
-	pluginRegistry            plugins.PluginRegistry
-	settings                  *v1.Settings
-	hasher                    func(resources []envoycache.Resource) (uint64, error)
-	listenerTranslatorFactory *ListenerSubsystemTranslatorFactory
+	lock                        sync.Mutex
+	pluginRegistry              plugins.PluginRegistry
+	settings                    *v1.Settings
+	hasher                      func(resources []envoycache.Resource) (uint64, error)
+	listenerTranslatorFactory   *ListenerSubsystemTranslatorFactory
+	shouldEnforceNamespaceMatch bool
 }
 
 func NewDefaultTranslator(settings *v1.Settings, pluginRegistry plugins.PluginRegistry) *translatorInstance {
@@ -68,12 +78,22 @@ func NewTranslatorWithHasher(
 	pluginRegistry plugins.PluginRegistry,
 	hasher func(resources []envoycache.Resource) (uint64, error),
 ) *translatorInstance {
+	shouldEnforceStr := os.Getenv(api_conversion.MatchingNamespaceEnv)
+	shouldEnforceNamespaceMatch := false
+	if shouldEnforceStr != "" {
+		var err error
+		shouldEnforceNamespaceMatch, err = strconv.ParseBool(shouldEnforceStr)
+		if err != nil {
+			// TODO: what to do here?
+		}
+	}
 	return &translatorInstance{
-		lock:                      sync.Mutex{},
-		pluginRegistry:            pluginRegistry,
-		settings:                  settings,
-		hasher:                    hasher,
-		listenerTranslatorFactory: NewListenerSubsystemTranslatorFactory(pluginRegistry, sslConfigTranslator, settings),
+		lock:                        sync.Mutex{},
+		pluginRegistry:              pluginRegistry,
+		settings:                    settings,
+		hasher:                      hasher,
+		listenerTranslatorFactory:   NewListenerSubsystemTranslatorFactory(pluginRegistry, sslConfigTranslator, settings),
+		shouldEnforceNamespaceMatch: shouldEnforceNamespaceMatch,
 	}
 }
 
@@ -107,7 +127,11 @@ func (t *translatorInstance) Translate(
 
 	// execute translation of listener and cluster subsystems
 	// during these translations, params.messages is side effected for the reports to use later in this loop
-	clusters, endpoints := t.translateClusterSubsystemComponents(params, proxy, reports)
+	var clusters []*envoy_config_cluster_v3.Cluster
+	var endpoints []*envoy_config_endpoint_v3.ClusterLoadAssignment
+	if !isGwApiProxy(proxy) {
+		clusters, endpoints = t.translateClusterSubsystemComponents(params, proxy, reports)
+	}
 	routeConfigs, listeners := t.translateListenerSubsystemComponents(params, proxy, proxyReport)
 	// run Resource Generator Plugins
 	for _, plugin := range t.pluginRegistry.GetResourceGeneratorPlugins() {

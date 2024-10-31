@@ -75,8 +75,8 @@ type ProxySyncer struct {
 	proxyTranslator ProxyTranslator
 	istioClient     kube.Client
 
-	pods krt.Collection[krtcollections.LocalityPod]
-	ucc  krt.Collection[krtcollections.UniqlyConnectedClient]
+	augmentedPods krt.Collection[krtcollections.LocalityPod]
+	uniqueClients krt.Collection[krtcollections.UniqlyConnectedClient]
 
 	proxyReconcileQueue ggv2utils.AsyncQueue[gloov1.ProxyList]
 
@@ -85,7 +85,8 @@ type ProxySyncer struct {
 	perclientSnapCollection krt.Collection[xdsSnapWrapper]
 	proxyTrigger            *krt.RecomputeTrigger
 
-	destRules DestinationRuleIndex
+	destRules  DestinationRuleIndex
+	translator setup.TranslatorFactory
 
 	waitForSync []cache.InformerSynced
 }
@@ -120,8 +121,8 @@ func NewProxySyncer(
 	inputs *GatewayInputChannels,
 	mgr manager.Manager,
 	client kube.Client,
-	pods krt.Collection[krtcollections.LocalityPod],
-	ucc krt.Collection[krtcollections.UniqlyConnectedClient],
+	augmentedPods krt.Collection[krtcollections.LocalityPod],
+	uniqueClients krt.Collection[krtcollections.UniqlyConnectedClient],
 	k8sGwExtensions extensions.K8sGatewayExtensions,
 	translator setup.TranslatorFactory,
 	xdsCache envoycache.SnapshotCache,
@@ -138,9 +139,10 @@ func NewProxySyncer(
 		k8sGwExtensions:     k8sGwExtensions,
 		proxyTranslator:     NewProxyTranslator(translator, xdsCache, settings, syncerExtensions, glooReporter),
 		istioClient:         client,
-		pods:                pods,
-		ucc:                 ucc,
+		augmentedPods:       augmentedPods,
+		uniqueClients:       uniqueClients,
 		proxyReconcileQueue: proxyReconcileQueue,
+		translator:          translator,
 	}
 }
 
@@ -265,7 +267,27 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	configMaps := krt.WrapClient(configMapClient, krt.WithName("ConfigMaps"))
 
 	secretClient := kclient.New[*corev1.Secret](s.istioClient)
-	secrets := krt.WrapClient(secretClient, krt.WithName("Secrets"))
+	k8sSecrets := krt.WrapClient(secretClient, krt.WithName("Secrets"))
+	legacySecretClient := &kubesecret.ResourceClient{
+		KubeCoreResourceClient: common.KubeCoreResourceClient{
+			ResourceType: &gloov1.Secret{},
+		},
+	}
+	secrets := krt.NewCollection(k8sSecrets, func(kctx krt.HandlerContext, i *corev1.Secret) *krtcollections.ResourceWrapper[*gloov1.Secret] {
+		secret, err := kubeconverters.GlooSecretConverterChain.FromKubeSecret(ctx, legacySecretClient, i)
+		if err != nil {
+			logger.Errorf(
+				"error while trying to convert kube secret %s to gloo secret: %s",
+				client.ObjectKeyFromObject(i).String(), err)
+			return nil
+		}
+		if secret == nil {
+			return nil
+		}
+		// this must be a gloov1 secret, we accept a panic if not
+		res := krtcollections.ResourceWrapper[*gloov1.Secret]{Inner: secret.(*gloov1.Secret)}
+		return &res
+	})
 
 	authConfigs := SetupCollectionDynamic[extauthkubev1.AuthConfig](
 		ctx,
@@ -314,7 +336,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 
 	finalUpstreams := krt.JoinCollection([]krt.Collection[UpstreamWrapper]{glooUpstreams, inMemUpstreams})
 
-	inputs := NewGlooK8sEndpointInputs(s.proxyTranslator.settings, s.istioClient, s.pods, services, finalUpstreams)
+	inputs := NewGlooK8sEndpointInputs(s.proxyTranslator.settings, s.istioClient, s.augmentedPods, services, finalUpstreams)
 
 	glooEndpoints := NewGlooK8sEndpoints(ctx, inputs)
 	clas := newEnvoyEndpoints(glooEndpoints)
@@ -343,7 +365,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 			logger,
 			&proxy,
 			configMaps,
-			clas,
+			clas, // TODO: we when split upstreams to individual translation we can remove this as well.
 			secrets,
 			finalUpstreams,
 			authConfigs,
@@ -353,8 +375,9 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	})
 
 	s.destRules = NewDestRuleIndex(s.istioClient)
-	epPerClient := NewIndexedEndpoints(logger.Desugar(), s.ucc, glooEndpoints, s.destRules)
-	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.ucc, s.mostXdsSnapshots, epPerClient)
+	epPerClient := NewIndexedEndpoints(logger.Desugar(), s.uniqueClients, glooEndpoints, s.destRules)
+	usPerClient := NewIndexedUpstreams(ctx, s.translator, finalUpstreams, s.uniqueClients, secrets, s.proxyTranslator.settings, s.destRules)
+	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.uniqueClients, s.mostXdsSnapshots, epPerClient, usPerClient)
 
 	// build ProxyList collection as glooProxies change
 	proxiesToReconcile := krt.NewSingleton(func(kctx krt.HandlerContext) *proxyList {
@@ -410,7 +433,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		inputs.Upstreams.Synced().HasSynced,
 		glooEndpoints.Synced().HasSynced,
 		clas.Synced().HasSynced,
-		s.pods.Synced().HasSynced,
+		s.augmentedPods.Synced().HasSynced,
 		upstreams.Synced().HasSynced,
 		glooUpstreams.Synced().HasSynced,
 		finalUpstreams.Synced().HasSynced,
@@ -574,7 +597,7 @@ func (s *ProxySyncer) translateProxy(
 	proxy *glooProxy,
 	kcm krt.Collection[*corev1.ConfigMap],
 	kep krt.Collection[EndpointResources],
-	ks krt.Collection[*corev1.Secret],
+	ks krt.Collection[krtcollections.ResourceWrapper[*gloov1.Secret]],
 	kus krt.Collection[UpstreamWrapper],
 	authConfigs krt.Collection[*extauthkubev1.AuthConfig],
 	rlConfigs krt.Collection[*rlkubev1a1.RateLimitConfig],
@@ -621,33 +644,10 @@ func (s *ProxySyncer) translateProxy(
 		as = append(as, a)
 	}
 	latestSnap.Artifacts = as
-
-	// secret client needed to use existing kube secret -> gloo secret converters
-	// the only actually use is to do client.NewResource() to get a gloov1.Secret
-	legacySecretClient := &kubesecret.ResourceClient{
-		KubeCoreResourceClient: common.KubeCoreResourceClient{
-			ResourceType: &gloov1.Secret{},
-		},
+	latestSnap.Secrets = make([]*gloov1.Secret, 0, len(secrets))
+	for _, s := range secrets {
+		latestSnap.Secrets = append(latestSnap.Secrets, s.Inner)
 	}
-
-	// this must be a solo-kit based kube secret client, we accept a panic if not
-	gs := make([]*gloov1.Secret, 0, len(secrets))
-	for _, i := range secrets {
-		secret, err := kubeconverters.GlooSecretConverterChain.FromKubeSecret(ctx, legacySecretClient, i)
-		if err != nil {
-			logger.Errorf(
-				"error while trying to convert kube secret %s to gloo secret: %s",
-				client.ObjectKeyFromObject(i).String(), err)
-			continue
-		}
-		if secret == nil {
-			continue
-		}
-		// this must be a gloov1 secret, we accept a panic if not
-		glooSecret := secret.(*gloov1.Secret)
-		gs = append(gs, glooSecret)
-	}
-	latestSnap.Secrets = gs
 
 	gupstreams := make([]*gloov1.Upstream, 0, len(upstreams))
 	for _, u := range upstreams {
@@ -698,6 +698,7 @@ func (s *ProxySyncer) translateProxy(
 		pluginRegistry: proxy.pluginRegistry,
 		fullReports:    reports,
 	}
+
 	return &out
 }
 

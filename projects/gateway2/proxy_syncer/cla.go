@@ -79,10 +79,10 @@ func prioritize(ep EndpointsForUpstream) *envoy_config_endpoint_v3.ClusterLoadAs
 }
 
 type uccWithEndpoints struct {
-	Client           krtcollections.UniqlyConnectedClient
-	Endpoints        envoycache.Resource
-	EndpointsVersion uint64
-	endpointsName    string
+	Client        krtcollections.UniqlyConnectedClient
+	Endpoints     envoycache.Resource
+	EndpointsHash uint64
+	endpointsName string
 }
 
 func (c uccWithEndpoints) ResourceName() string {
@@ -90,7 +90,7 @@ func (c uccWithEndpoints) ResourceName() string {
 }
 
 func (c uccWithEndpoints) Equals(in uccWithEndpoints) bool {
-	return c.Client.Equals(in.Client) && c.EndpointsVersion == in.EndpointsVersion
+	return c.Client.Equals(in.Client) && c.EndpointsHash == in.EndpointsHash
 }
 
 type IndexedEndpoints struct {
@@ -112,10 +112,10 @@ func NewIndexedEndpoints(logger *zap.Logger, uccs krt.Collection[krtcollections.
 		for _, ucc := range uccs {
 			cla := applyDestRulesForHostnames(logger, kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
 			uccWithEndpointsRet = append(uccWithEndpointsRet, uccWithEndpoints{
-				Client:           ucc,
-				Endpoints:        resource.NewEnvoyResource(cla),
-				EndpointsVersion: ep.lbEpsEqualityHash,
-				endpointsName:    ep.ResourceName(),
+				Client:        ucc,
+				Endpoints:     resource.NewEnvoyResource(cla),
+				EndpointsHash: ep.lbEpsEqualityHash,
+				endpointsName: ep.ResourceName(),
 			})
 		}
 		return uccWithEndpointsRet
@@ -135,8 +135,7 @@ func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, des
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
 
-	hostname := fromEndpoint(ep)
-	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, hostname, c.Labels)
+	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, ep.Hostname, c.Labels)
 	var priorityInfo *PriorityInfo
 	if destrule != nil {
 		priorityInfo = getDestruleFor(*destrule)
@@ -148,12 +147,6 @@ func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, des
 	}
 
 	return prioritizeWithLbInfo(logger, ep, lbInfo)
-}
-
-func fromEndpoint(ep EndpointsForUpstream) string {
-	// get the upstream name and namespace
-	// TODO: suppport other suffixes that are not cluster.local
-	return fmt.Sprintf("%s.%s.svc.cluster.local", ep.UpstreamRef.Name, ep.UpstreamRef.Namespace)
 }
 
 func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
@@ -168,30 +161,38 @@ func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
 }
 
 func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.UniqlyConnectedClient],
-	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints) krt.Collection[xdsSnapWrapper] {
+	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints, iu IndexedUpstreams) krt.Collection[xdsSnapWrapper] {
 
 	xdsSnapshotsForUcc := krt.NewCollection(uccCol, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
-		mostlySnaps := krt.Fetch(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
-		if len(mostlySnaps) != 1 {
+		maybeMostlySnap := krt.FetchOne(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
+		if maybeMostlySnap == nil {
 			return nil
 		}
-		mostlySnap := mostlySnaps[0]
+		genericSnap := maybeMostlySnap.snap
+		clustersForUcc := iu.FetchClustersForClient(kctx, ucc)
+
+		clustersProto := make([]envoycache.Resource, 0, len(clustersForUcc))
+		var clustersHash uint64
+		for _, ep := range clustersForUcc {
+			clustersProto = append(clustersProto, ep.Cluster)
+			clustersHash ^= ep.ClusterVersion
+		}
+		clustersVersion := fmt.Sprintf("%d", clustersHash)
+
 		endpointsForUcc := ie.FetchEndpointsForClient(kctx, ucc)
-		genericSnap := mostlySnap.snap
-		clustersVersion := mostlySnap.snap.Clusters.Version
-
 		endpointsProto := make([]envoycache.Resource, 0, len(endpointsForUcc))
-		var endpointsVersion uint64
-
+		var endpointsHash uint64
 		for _, ep := range endpointsForUcc {
 			endpointsProto = append(endpointsProto, ep.Endpoints)
-			endpointsVersion ^= ep.EndpointsVersion
+			endpointsHash ^= ep.EndpointsHash
 		}
+
+		mostlySnap := *maybeMostlySnap
 
 		mostlySnap.proxyKey = ucc.ResourceName()
 		mostlySnap.snap = &xds.EnvoySnapshot{
-			Clusters:  genericSnap.Clusters,
-			Endpoints: envoycache.NewResources(fmt.Sprintf("%v-%v", clustersVersion, endpointsVersion), endpointsProto),
+			Clusters:  envoycache.NewResources(clustersVersion, clustersProto),
+			Endpoints: envoycache.NewResources(fmt.Sprintf("%s-%d", clustersVersion, endpointsHash), endpointsProto),
 			Routes:    genericSnap.Routes,
 			Listeners: genericSnap.Listeners,
 		}

@@ -35,12 +35,12 @@ func startSetupLoop(ctx context.Context) error {
 	k8sgw := envutils.IsEnvTruthy(constants.GlooGatewayEnableK8sGwControllerEnv)
 
 	// get settings:
-	var ucc xdsserver.Callbacks
+	var uniqueClientCallbacks xdsserver.Callbacks
 	var builder krtcollections.UniquelyConnectedClientsBulider
 	if k8sgw {
-		ucc, builder = krtcollections.NewUniquelyConnectedClients()
+		uniqueClientCallbacks, builder = krtcollections.NewUniquelyConnectedClients()
 	}
-	setupOpts := bootstrap.NewSetupOpts(xds.NewAdsSnapshotCache(ctx), ucc)
+	setupOpts := bootstrap.NewSetupOpts(xds.NewAdsSnapshotCache(ctx), uniqueClientCallbacks)
 	// start gw if needed, get the proxy reconcile q
 	// pass that in to the setup func
 	if k8sgw {

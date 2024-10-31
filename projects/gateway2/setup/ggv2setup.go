@@ -102,14 +102,14 @@ func StartGGv2(ctx context.Context,
 	}
 
 	logger.Info("creating krt collections")
-	pods := krtcollections.NewPodsCollection(ctx, kubeClient)
+	augmentedPods := krtcollections.NewPodsCollection(ctx, kubeClient)
 	setting := proxy_syncer.SetupCollectionDynamic[glookubev1.Settings](
 		ctx,
 		kubeClient,
 		settingsGVR,
 		krt.WithName("GlooSettings"))
 
-	ucc := uccBuilder(ctx, pods)
+	ucc := uccBuilder(ctx, augmentedPods)
 
 	settingsSingle := krt.NewSingleton(func(ctx krt.HandlerContext) *glookubev1.Settings {
 		s := krt.FetchOne(ctx, setting,
@@ -140,8 +140,8 @@ func StartGGv2(ctx context.Context,
 		Translator:           setup.TranslatorFactory{PluginRegistry: pluginRegistryFactory(pluginOpts)},
 		GlooStatusReporter:   glooReporter,
 		Client:               kubeClient,
-		Pods:                 pods,
-		Ucc:                  ucc,
+		AugmentedPods:        augmentedPods,
+		UniqueClients:        ucc,
 
 		InitialSettings: initialSettings,
 		Settings:        settingsSingle,

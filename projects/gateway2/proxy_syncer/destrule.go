@@ -72,6 +72,10 @@ func newDestruleIndex(destRuleCollection krt.Collection[DestinationRuleWrapper])
 }
 
 func (d *DestinationRuleIndex) FetchDestRulesFor(kctx krt.HandlerContext, proxyNs string, hostname string, podLabels map[string]string) *DestinationRuleWrapper {
+	if hostname == "" {
+		return nil
+	}
+
 	key := NsWithHostname{
 		Ns:       proxyNs,
 		Hostname: hostname,

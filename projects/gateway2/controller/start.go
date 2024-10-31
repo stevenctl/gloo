@@ -68,8 +68,8 @@ type StartConfig struct {
 
 	Client istiokube.Client
 
-	Pods krt.Collection[krtcollections.LocalityPod]
-	Ucc  krt.Collection[krtcollections.UniqlyConnectedClient]
+	AugmentedPods krt.Collection[krtcollections.LocalityPod]
+	UniqueClients krt.Collection[krtcollections.UniqlyConnectedClient]
 
 	InitialSettings *glookubev1.Settings
 	Settings        krt.Singleton[glookubev1.Settings]
@@ -161,8 +161,8 @@ func NewControllerBuilder(ctx context.Context, cfg StartConfig) (*ControllerBuil
 		inputChannels,
 		mgr,
 		cfg.Client,
-		cfg.Pods,
-		cfg.Ucc,
+		cfg.AugmentedPods,
+		cfg.UniqueClients,
 		k8sGwExtensions,
 		cfg.Translator,
 		cfg.SetupOpts.Cache,
