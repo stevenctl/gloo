@@ -142,7 +142,7 @@ func NewControllerBuilder(ctx context.Context, cfg StartConfig) (*ControllerBuil
 		Mgr:         mgr,
 		IstioClient: cfg.Client,
 		CoreCollections: ext.CoreCollections{
-			Pods:                        cfg.Pods,
+			AugmentedPods:               cfg.AugmentedPods,
 			RouteOptionCollection:       routeOptionCollection,
 			VirtualHostOptionCollection: virtualHostOptionCollection,
 			AuthConfigCollection:        authConfigCollection,

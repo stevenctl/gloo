@@ -32,7 +32,7 @@ type K8sGatewayExtensions interface {
 }
 
 type CoreCollections struct {
-	Pods                        krt.Collection[krtcollections.LocalityPod]
+	AugmentedPods               krt.Collection[krtcollections.LocalityPod]
 	AuthConfigCollection        krt.Collection[*extauthkubev1.AuthConfig]
 	RouteOptionCollection       krt.Collection[*gatewaykubev1.RouteOption]
 	VirtualHostOptionCollection krt.Collection[*gatewaykubev1.VirtualHostOption]
@@ -59,7 +59,7 @@ func NewK8sGatewayExtensions(
 	params K8sGatewayExtensionsFactoryParameters,
 ) (K8sGatewayExtensions, error) {
 	seExtension := serviceentry.New(ctx,
-		params.IstioClient, params.CoreCollections.Pods)
+		params.IstioClient, params.CoreCollections.AugmentedPods)
 
 	queries := query.NewData(
 		params.Mgr.GetClient(),
