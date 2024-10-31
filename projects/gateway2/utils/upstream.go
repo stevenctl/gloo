@@ -3,7 +3,6 @@ package utils
 import (
 	"fmt"
 
-	"github.com/solo-io/gloo/projects/gloo/cli/pkg/cmd/edit/upstream"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 )
 

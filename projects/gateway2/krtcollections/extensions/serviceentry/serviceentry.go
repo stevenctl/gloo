@@ -69,6 +69,14 @@ type Extension struct {
 	endpoints      krt.Collection[krtcollections.EndpointsForUpstream]
 }
 
+func (s *Extension) Synced() krt.Syncer {
+	return krtcollections.FlattenedSyncers{
+		s.serviceEntries.Synced(),
+		s.upstreams.Synced(),
+		s.endpoints.Synced(),
+	}
+}
+
 func (s *Extension) Endpoints() []krt.Collection[krtcollections.EndpointsForUpstream] {
 	return []krt.Collection[krtcollections.EndpointsForUpstream]{s.endpoints}
 }
@@ -146,6 +154,7 @@ func New(
 	client kube.Client,
 	pods krt.Collection[krtcollections.LocalityPod],
 ) *Extension {
+	println("stevenctl is my code even running")
 	defaultFilter := kclient.Filter{ObjectFilter: client.ObjectFilter()}
 
 	seInformer := kclient.NewDelayedInformer[*networkingclient.ServiceEntry](client,
@@ -335,9 +344,11 @@ func buildEndpoints(
 			return nil
 		}
 
-		autoMTLS := false
+		autoMTLS := true
 		logger := contextutils.LoggerFrom(context.Background()).Desugar().With(zap.String("upstream", usw.Inner.GetMetadata().Ref().Key()))
 		out := krtcollections.NewEndpointsForUpstream(usw, logger)
+		println("stevenctl se eps hostname: ", out.Hostname)
+		println("stevenctl se eps cls name: ", out.ClusterName)
 		if se.Spec.WorkloadSelector != nil {
 			workloads := krt.Fetch(ctx, allWorkloads, krt.FilterIndex(workloadsByServiceEntry, krt.NewNamed(se)))
 			for _, workload := range workloads {

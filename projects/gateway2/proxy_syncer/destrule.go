@@ -80,6 +80,7 @@ func newDestruleIndex(destRuleCollection krt.Collection[DestinationRuleWrapper])
 }
 
 func (d *DestinationRuleIndex) FetchDestRulesFor(kctx krt.HandlerContext, proxyNs string, hostname string, podLabels map[string]string) *DestinationRuleWrapper {
+	println("stevenctl fetching drs for: ", hostname)
 	if hostname == "" {
 		return nil
 	}
@@ -89,6 +90,7 @@ func (d *DestinationRuleIndex) FetchDestRulesFor(kctx krt.HandlerContext, proxyN
 		Hostname: hostname,
 	}
 	destrules := krt.Fetch(kctx, d.Destrules, krt.FilterIndex(d.ByHostname, key), krt.FilterSelects(podLabels))
+	println("stevenctl found drs for: ", hostname, " ", len(destrules))
 	if len(destrules) == 0 {
 		return nil
 	}

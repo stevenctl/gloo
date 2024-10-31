@@ -465,6 +465,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		s.perclientSnapCollection.Synced().HasSynced,
 		s.mostXdsSnapshots.Synced().HasSynced,
 		s.destRules.Destrules.Synced().HasSynced,
+		s.k8sGwExtensions.KRTExtensions().Synced().HasSynced,
 	}
 	return nil
 }
