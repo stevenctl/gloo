@@ -54,7 +54,13 @@ type EndpointsInputs struct {
 	Services          krt.Collection[*corev1.Service]
 }
 
-func NewGlooK8sEndpointInputs(settings krt.Singleton[glookubev1.Settings], istioClient kube.Client, pods krt.Collection[LocalityPod], services krt.Collection[*corev1.Service], finalUpstreams krt.Collection[UpstreamWrapper]) EndpointsInputs {
+func NewGlooK8sEndpointInputs(
+	settings krt.Singleton[glookubev1.Settings],
+	istioClient kube.Client,
+	pods krt.Collection[LocalityPod],
+	services krt.Collection[*corev1.Service],
+	finalUpstreams krt.Collection[UpstreamWrapper],
+) EndpointsInputs {
 	epClient := kclient.New[*corev1.Endpoints](istioClient)
 	kubeEndpoints := krt.WrapClient(epClient, krt.WithName("Endpoints"))
 	endpointSettings := krt.NewSingleton(func(ctx krt.HandlerContext) *EndpointsSettings {

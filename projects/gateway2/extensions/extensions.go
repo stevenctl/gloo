@@ -7,6 +7,7 @@ import (
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections/extensions/serviceentry"
 	"github.com/solo-io/gloo/projects/gateway2/query"
+	"github.com/solo-io/gloo/projects/gateway2/query/enterprisequery"
 	"github.com/solo-io/gloo/projects/gateway2/translator"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/registry"
 	extauthkubev1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1/kube/apis/enterprise.gloo.solo.io/v1"
@@ -58,13 +59,14 @@ func NewK8sGatewayExtensions(
 	ctx context.Context,
 	params K8sGatewayExtensionsFactoryParameters,
 ) (K8sGatewayExtensions, error) {
+	seExtension := serviceentry.New(ctx,
+		params.IstioClient, params.CoreCollections.Pods)
+
 	queries := query.NewData(
 		params.Mgr.GetClient(),
 		params.Mgr.GetScheme(),
+		query.WithBackendRefResolvers(seExtension),
 	)
-
-	seExtension := serviceentry.New(ctx,
-		params.IstioClient, params.CoreCollections.Pods)
 
 	return &k8sGatewayExtensions{
 		mgr:            params.Mgr,
