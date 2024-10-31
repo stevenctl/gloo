@@ -5,27 +5,30 @@ import (
 	"strconv"
 	"strings"
 
+	"go.uber.org/zap"
+	"google.golang.org/protobuf/proto"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	// endpointv3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	apiv1 "sigs.k8s.io/gateway-api/apis/v1"
+
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
+	"github.com/solo-io/gloo/projects/gateway2/query"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/edsupstream"
 	"github.com/solo-io/go-utils/contextutils"
 	core "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
-	"go.uber.org/zap"
-	"google.golang.org/protobuf/proto"
-	"istio.io/istio/pkg/kube"
-	"istio.io/istio/pkg/kube/controllers"
-	"istio.io/istio/pkg/kube/kclient"
-	"istio.io/istio/pkg/kube/krt"
-	"istio.io/istio/pkg/maps"
-	"istio.io/istio/pkg/ptr"
-	"istio.io/istio/pkg/slices"
 
 	networking "istio.io/api/networking/v1alpha3"
 	networkingclient "istio.io/client-go/pkg/apis/networking/v1"
 	"istio.io/istio/pkg/config/schema/gvr"
+	"istio.io/istio/pkg/kube"
+	"istio.io/istio/pkg/kube/controllers"
+	"istio.io/istio/pkg/kube/kclient"
+	"istio.io/istio/pkg/kube/krt"
 	"istio.io/istio/pkg/kube/kubetypes"
+	"istio.io/istio/pkg/maps"
+	"istio.io/istio/pkg/ptr"
+	"istio.io/istio/pkg/slices"
 )
 
 const (
@@ -55,44 +58,84 @@ func GetHostPort(us *v1.Upstream) (string, uint32, bool) {
 	return seHost, uint32(sePort), true
 }
 
-type seExtension struct {
-	client    kube.Client
-	upstreams krt.Collection[krtcollections.UpstreamWrapper]
-	endpoints krt.Collection[krtcollections.EndpointsForUpstream]
+var _ krtcollections.KRTExtensions = &Extension{}
+
+type Extension struct {
+	client kube.Client
+
+	serviceEntries krt.Collection[*networkingclient.ServiceEntry]
+	upstreams      krt.Collection[krtcollections.UpstreamWrapper]
+	endpoints      krt.Collection[krtcollections.EndpointsForUpstream]
 }
 
-func (s *seExtension) HasSynced() bool {
-	return s.upstreams.Synced().HasSynced() && s.endpoints.Synced().HasSynced()
-}
-
-func (s *seExtension) WaitUntilSynced(stop <-chan struct{}) bool {
-	if !s.endpoints.Synced().WaitUntilSynced(stop) {
-		return false
-	}
-
-	select {
-	case <-stop:
-		return false
-	default:
-	}
-
-	return s.upstreams.Synced().WaitUntilSynced(stop)
-}
-
-// Endpoints implements krtcollections.KRTExtension.
-func (s *seExtension) Endpoints() []krt.Collection[krtcollections.EndpointsForUpstream] {
+func (s *Extension) Endpoints() []krt.Collection[krtcollections.EndpointsForUpstream] {
 	return []krt.Collection[krtcollections.EndpointsForUpstream]{s.endpoints}
 }
 
-func (s *seExtension) Upstreams() []krt.Collection[krtcollections.UpstreamWrapper] {
+func (s *Extension) Upstreams() []krt.Collection[krtcollections.UpstreamWrapper] {
 	return []krt.Collection[krtcollections.UpstreamWrapper]{s.upstreams}
+}
+
+// ServiceEntries collection is exposed for backendRef lookups
+// TODO maybe the collection should be initialized elsewhere then?
+func (s *Extension) ServiceEntries() krt.Collection[*networkingclient.ServiceEntry] {
+	return s.serviceEntries
+}
+
+func (s *Extension) GetBackendForRef(ctx context.Context, obj query.From, backend *apiv1.BackendObjectReference) (client.Object, error, bool) {
+	// TODO hopefully we don't end up in a state that we need this:
+	// krtctx := ctx.Value("krtcontextkey")
+	// if krtctx == nil {
+	// 	// krt.Get
+	// } else {
+	// 	// krt.Fetch
+	// }
+
+	if ptr.OrEmpty(backend.Group) != networkingclient.GroupName {
+		return nil, nil, false
+	}
+
+	var found *networkingclient.ServiceEntry
+	switch ptr.OrEmpty(backend.Kind) {
+	case "Hostname":
+		// TODO we can index by hostname once we do this inside KRT
+		items := s.serviceEntries.List()
+		for _, se := range items {
+			if !slices.Contains(se.Spec.Hosts, string(backend.Name)) {
+				continue
+			}
+			// take the oldest one when multiple match
+			if found == nil || se.CreationTimestamp.Time.Before(found.CreationTimestamp.Time) {
+				found = se
+			}
+		}
+		if found == nil {
+			return nil, query.ErrUnresolvedReference, true
+		}
+		return found, nil, true
+	case "ServiceEntry":
+		// TODO use Fetch
+		key := krt.GetKey(&networkingclient.ServiceEntry{ObjectMeta: metav1.ObjectMeta{
+			Name:      string(backend.Name),
+			Namespace: string(ptr.OrDefault(backend.Namespace, apiv1.Namespace(obj.Namespace()))),
+		}})
+		found = ptr.Flatten(s.serviceEntries.GetKey(key))
+	default:
+		// not responsible for this
+		return nil, nil, false
+	}
+
+	if found == nil {
+		return nil, query.ErrUnresolvedReference, true
+	}
+	return found, nil, true
 }
 
 func New(
 	ctx context.Context,
 	client kube.Client,
 	pods krt.Collection[krtcollections.LocalityPod],
-) krtcollections.KRTExtensions {
+) *Extension {
 	defaultFilter := kclient.Filter{ObjectFilter: client.ObjectFilter()}
 
 	seInformer := kclient.NewDelayedInformer[*networkingclient.ServiceEntry](client,
@@ -109,10 +152,11 @@ func New(
 	ConvertedUpstreams := buildUpstreams(ServiceEntries)
 	Endpoints := buildEndpoints(SelectingServiceEntries, ConvertedUpstreams, pods, WorkloadEntries)
 
-	return &seExtension{
-		client:    client,
-		upstreams: ConvertedUpstreams,
-		endpoints: Endpoints,
+	return &Extension{
+		client:         client,
+		serviceEntries: ServiceEntries,
+		upstreams:      ConvertedUpstreams,
+		endpoints:      Endpoints,
 	}
 }
 
