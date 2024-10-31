@@ -200,7 +200,6 @@ func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func
 					}
 				}
 
-				var podLabels map[string]string
 				var augmentedLabels map[string]string
 				var l krtcollections.PodLocality
 				if podName != "" {
@@ -210,11 +209,10 @@ func TransformUpstreamsBuilder(ctx context.Context, inputs EndpointsInputs) func
 					}))
 					if maybePod != nil {
 						l = maybePod.Locality
-						podLabels = maybePod.AugmentedLabels
 						augmentedLabels = maybePod.AugmentedLabels
 					}
 				}
-				ep := createLbEndpoint(addr.IP, port, podLabels, enableAutoMtls)
+				ep := createLbEndpoint(addr.IP, port, augmentedLabels, enableAutoMtls)
 
 				ret.Add(l, EndpointWithMd{
 					LbEndpoint: ep,

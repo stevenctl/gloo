@@ -179,6 +179,7 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 			// error if we can't get the pod
 			return "", fmt.Errorf("pod not found for node %v", r.Node)
 		}
+		x.logger.Debug("adding xds client", zap.Any("locality", pod.Locality), zap.String("ns", pod.Namespace), zap.Any("labels", pod.AugmentedLabels))
 		// TODO: modify request to include the label that are relevant for the client?
 		ucc := newUniqlyConnectedClient(r.Node, pod.Namespace, pod.AugmentedLabels, pod.Locality)
 		c = newConnectedClient(ucc.resourceName)

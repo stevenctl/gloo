@@ -31,7 +31,6 @@ type PriorityInfo struct {
 }
 
 type Prioritizer struct {
-	proxyLabels            map[string]string
 	priorityLabels         []string
 	priorityLabelOverrides map[string]string
 	lowestPriority         int
@@ -54,7 +53,7 @@ func (p *Prioritizer) GetPriority(proxyLabels, upstreamEndpointLabels map[string
 	for j, label := range p.priorityLabels {
 		valueForProxy, ok := p.priorityLabelOverrides[label]
 		if !ok {
-			valueForProxy = p.proxyLabels[label]
+			valueForProxy = proxyLabels[label]
 		}
 
 		if valueForProxy != upstreamEndpointLabels[label] {
