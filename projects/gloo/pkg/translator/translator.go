@@ -54,10 +54,6 @@ var (
 	_ Translator = new(translatorInstance)
 )
 
-func isGwApiProxy(proxy *v1.Proxy) bool {
-	return proxy.GetMetadata().GetLabels()[utils.ProxyTypeKey] == utils.GatewayApiProxyValue
-}
-
 // translatorInstance is the implementation for a Translator used during Gloo translation
 type translatorInstance struct {
 	lock                        sync.Mutex
@@ -129,9 +125,7 @@ func (t *translatorInstance) Translate(
 	// during these translations, params.messages is side effected for the reports to use later in this loop
 	var clusters []*envoy_config_cluster_v3.Cluster
 	var endpoints []*envoy_config_endpoint_v3.ClusterLoadAssignment
-	if !isGwApiProxy(proxy) {
-		clusters, endpoints = t.translateClusterSubsystemComponents(params, proxy, reports)
-	}
+	clusters, endpoints = t.translateClusterSubsystemComponents(params, proxy, reports)
 	routeConfigs, listeners := t.translateListenerSubsystemComponents(params, proxy, proxyReport)
 	// run Resource Generator Plugins
 	for _, plugin := range t.pluginRegistry.GetResourceGeneratorPlugins() {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/solo-io/gloo/pkg/utils/settingsutil"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	ggv2utils "github.com/solo-io/gloo/projects/gateway2/utils"
@@ -64,8 +65,7 @@ func NewIndexedUpstreams(
 		settings := &ksettings.Spec
 
 		for _, ucc := range uccs {
-
-			upstream := applyDestRulesForUpstream(logger, kctx, destinationRulesIndex, ucc.Namespace, up, ucc)
+			upstream, name := applyDestRulesForUpstream(logger, kctx, destinationRulesIndex, ucc.Namespace, up, ucc)
 
 			latestSnap := &gloosnapshot.ApiSnapshot{}
 			latestSnap.Secrets = make([]*gloov1.Secret, 0, len(secrets))
@@ -73,14 +73,17 @@ func NewIndexedUpstreams(
 				latestSnap.Secrets = append(latestSnap.Secrets, s.Inner)
 			}
 
-			r, version := translate(ctx, settings, translator, latestSnap, upstream)
-			if r == nil {
+			c, version := translate(ctx, settings, translator, latestSnap, upstream)
+			if c == nil {
 				continue
+			}
+			if name != "" && c.GetEdsClusterConfig() != nil {
+				c.GetEdsClusterConfig().ServiceName = name
 			}
 
 			uccWithClusterRet = append(uccWithClusterRet, uccWithCluster{
 				Client:         ucc,
-				Cluster:        r,
+				Cluster:        resource.NewEnvoyResource(c),
 				ClusterVersion: version,
 				upstreamName:   up.ResourceName(),
 			})
@@ -97,7 +100,7 @@ func NewIndexedUpstreams(
 	}
 }
 
-func translate(ctx context.Context, settings *gloov1.Settings, translator setup.TranslatorFactory, snap *gloosnapshot.ApiSnapshot, up *gloov1.Upstream) (envoycache.Resource, uint64) {
+func translate(ctx context.Context, settings *gloov1.Settings, translator setup.TranslatorFactory, snap *gloosnapshot.ApiSnapshot, up *gloov1.Upstream) (*envoy_config_cluster_v3.Cluster, uint64) {
 
 	ctx = settingsutil.WithSettings(ctx, settings)
 
@@ -114,34 +117,38 @@ func translate(ctx context.Context, settings *gloov1.Settings, translator setup.
 		return nil, 0
 	}
 
-	return resource.NewEnvoyResource(cluster), ggv2utils.HashProto(cluster)
+	return cluster, ggv2utils.HashProto(cluster)
 }
 
-func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, u UpstreamWrapper, c krtcollections.UniqlyConnectedClient) *gloov1.Upstream {
+func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, u UpstreamWrapper, c krtcollections.UniqlyConnectedClient) (*gloov1.Upstream, string) {
 	// host that would match the dest rule from the endpoints.
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
 	hostname := ggv2utils.GetHostnameForUpstream(u.Inner)
 
 	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, hostname, c.Labels)
-	if outlier := destrule.Spec.GetTrafficPolicy().GetOutlierDetection(); outlier != nil {
-		// do not mutate the original upstream
-		up := *u.Inner
+	if destrule != nil {
 
-		out := &cluster.OutlierDetection{
-			Consecutive_5Xx:  outlier.GetConsecutive_5XxErrors(),
-			Interval:         outlier.GetInterval(),
-			BaseEjectionTime: outlier.GetBaseEjectionTime(),
-			// TODO: do the rest of them
+		if outlier := destrule.Spec.GetTrafficPolicy().GetOutlierDetection(); outlier != nil {
+			name := getEndpointClusterName(u.Inner)
+			// do not mutate the original upstream
+			up := *u.Inner
+
+			out := &cluster.OutlierDetection{
+				Consecutive_5Xx:  outlier.GetConsecutive_5XxErrors(),
+				Interval:         outlier.GetInterval(),
+				BaseEjectionTime: outlier.GetBaseEjectionTime(),
+				// TODO: do the rest of them
+			}
+			if outlier.MaxEjectionPercent > 0 {
+				out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.MaxEjectionPercent)}
+			}
+
+			up.OutlierDetection = out
+
+			return &up, name
 		}
-		if outlier.MaxEjectionPercent > 0 {
-			out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.MaxEjectionPercent)}
-		}
-
-		up.OutlierDetection = out
-
-		return &up
 	}
 
-	return u.Inner
+	return u.Inner, ""
 }

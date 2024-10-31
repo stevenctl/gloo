@@ -99,9 +99,9 @@ func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo Lo
 		endpoints := getEndpoints(eps, lbInfo)
 		for _, ep := range endpoints {
 			ep.Locality = l
+			totalEndpoints += len(ep.LbEndpoints)
 		}
 
-		totalEndpoints += len(endpoints)
 		cla.Endpoints = append(cla.Endpoints, endpoints...)
 	}
 
@@ -152,6 +152,7 @@ func applyFailoverPriorityPerLocality(
 
 	out := make([]*envoy_config_endpoint_v3.LocalityLbEndpoints, len(priorityMap))
 	for i, priority := range priorities {
+		out[i] = &envoy_config_endpoint_v3.LocalityLbEndpoints{}
 		out[i].Priority = uint32(priority)
 		var weight uint32
 		for _, index := range priorityMap[priority] {
@@ -159,8 +160,10 @@ func applyFailoverPriorityPerLocality(
 			weight += eps[index].GetLoadBalancingWeight().GetValue()
 		}
 		// reset weight
-		out[i].LoadBalancingWeight = &wrappers.UInt32Value{
-			Value: weight,
+		if weight > 0 {
+			out[i].LoadBalancingWeight = &wrappers.UInt32Value{
+				Value: weight,
+			}
 		}
 	}
 

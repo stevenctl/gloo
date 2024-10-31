@@ -35,7 +35,7 @@ type DestinationRuleWrapper struct {
 
 // important for FilterSelects below
 func (s DestinationRuleWrapper) GetLabelSelector() map[string]string {
-	return s.Spec.WorkloadSelector.MatchLabels
+	return s.Spec.GetWorkloadSelector().GetMatchLabels()
 }
 
 func (c DestinationRuleWrapper) ResourceName() string {

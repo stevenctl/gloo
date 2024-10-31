@@ -511,7 +511,10 @@ func (s *ProxySyncer) Start(ctx context.Context) error {
 				snapWrap := e.Latest()
 				s.proxyTranslator.syncXds(ctx, snapWrap.snap, snapWrap.proxyKey)
 			} else {
-				s.proxyTranslator.xdsCache.ClearSnapshot(e.Latest().proxyKey)
+				// key := e.Latest().proxyKey
+				// if _, err := s.proxyTranslator.xdsCache.GetSnapshot(key); err == nil {
+				// 	s.proxyTranslator.xdsCache.ClearSnapshot(e.Latest().proxyKey)
+				// }
 			}
 		}
 	}, true)

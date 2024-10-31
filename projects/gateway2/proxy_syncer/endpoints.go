@@ -9,6 +9,7 @@ import (
 	envoy_config_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/structpb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	ggv2utils "github.com/solo-io/gloo/projects/gateway2/utils"
@@ -85,15 +86,14 @@ type EndpointsForUpstream struct {
 }
 
 func NewEndpointsForUpstream(us UpstreamWrapper, logger *zap.Logger) *EndpointsForUpstream {
-	clusterName := translator.UpstreamToClusterName(us.Inner.GetMetadata().Ref())
 	// start with a hash of the cluster name. technically we dont need it for krt, as we can compare the upstream name. but it helps later
 	// to compute the hash we present envoy with.
 	h := fnv.New64()
-	h.Write([]byte(clusterName))
+	h.Write([]byte(us.Inner.GetMetadata().Ref().String()))
 	lbEpsEqualityHash := h.Sum64()
 
 	// add the upstream hash to the clustername, so that if it changes the envoy cluster will become warm again.
-	clusterName = getEndpointClusterName(clusterName, us.Inner)
+	clusterName := getEndpointClusterName(us.Inner)
 	return &EndpointsForUpstream{
 		LbEps: make(map[krtcollections.PodLocality][]EndpointWithMd),
 		UpstreamRef: types.NamespacedName{
@@ -245,7 +245,8 @@ func createLbEndpoint(address string, port uint32, podLabels map[string]string, 
 	}
 
 	return &envoy_config_endpoint_v3.LbEndpoint{
-		Metadata: metadata,
+		Metadata:            metadata,
+		LoadBalancingWeight: wrapperspb.UInt32(1),
 		HostIdentifier: &envoy_config_endpoint_v3.LbEndpoint_Endpoint{
 			Endpoint: &envoy_config_endpoint_v3.Endpoint{
 				Address: &envoy_config_core_v3.Address{
@@ -320,7 +321,8 @@ func findFirstPortInEndpointSubsets(subset corev1.EndpointSubset, singlePortServ
 }
 
 // TODO: use exported version from translator?
-func getEndpointClusterName(clusterName string, upstream *v1.Upstream) string {
+func getEndpointClusterName(upstream *v1.Upstream) string {
+	clusterName := translator.UpstreamToClusterName(upstream.GetMetadata().Ref())
 	endpointClusterName, err := translator.GetEndpointClusterName(clusterName, upstream)
 	if err != nil {
 		panic(err)
