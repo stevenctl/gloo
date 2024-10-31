@@ -2,6 +2,7 @@ package registry
 
 import (
 	gatewaykubev1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1/kube/apis/gateway.solo.io/v1"
+	"github.com/solo-io/gloo/projects/gateway2/krtcollections/extensions/serviceentry"
 	gwquery "github.com/solo-io/gloo/projects/gateway2/query"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/directresponse"
@@ -26,6 +27,7 @@ type PluginRegistry struct {
 	listenerPlugins        []plugins.ListenerPlugin
 	postTranslationPlugins []plugins.PostTranslationPlugin
 	statusPlugins          []plugins.StatusPlugin
+	backendPlugins         []plugins.BackendPlugin
 }
 
 func (p *PluginRegistry) GetRoutePlugins() []plugins.RoutePlugin {
@@ -44,12 +46,17 @@ func (p *PluginRegistry) GetStatusPlugins() []plugins.StatusPlugin {
 	return p.statusPlugins
 }
 
+func (p *PluginRegistry) GetBackendPlugins() []plugins.BackendPlugin {
+	return p.backendPlugins
+}
+
 func NewPluginRegistry(allPlugins []plugins.Plugin) PluginRegistry {
 	var (
 		routePlugins           []plugins.RoutePlugin
 		listenerPlugins        []plugins.ListenerPlugin
 		postTranslationPlugins []plugins.PostTranslationPlugin
 		statusPlugins          []plugins.StatusPlugin
+		backendPlugins         []plugins.BackendPlugin
 	)
 
 	for _, plugin := range allPlugins {
@@ -65,12 +72,16 @@ func NewPluginRegistry(allPlugins []plugins.Plugin) PluginRegistry {
 		if statusPlugin, ok := plugin.(plugins.StatusPlugin); ok {
 			statusPlugins = append(statusPlugins, statusPlugin)
 		}
+		if backendPlugin, ok := plugin.(plugins.BackendPlugin); ok {
+			backendPlugins = append(backendPlugins, backendPlugin)
+		}
 	}
 	return PluginRegistry{
 		routePlugins,
 		listenerPlugins,
 		postTranslationPlugins,
 		statusPlugins,
+		backendPlugins,
 	}
 }
 
@@ -95,5 +106,6 @@ func BuildPlugins(
 		listeneroptions.NewPlugin(queries, client),
 		urlrewrite.NewPlugin(),
 		directresponse.NewPlugin(queries), // direct response needs to run after any plugin that might set an action
+		serviceentry.NewBackendPlugin(),
 	}
 }

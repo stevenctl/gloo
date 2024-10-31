@@ -14,6 +14,7 @@ import (
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
 	"github.com/solo-io/gloo/projects/gateway2/query"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
+	"github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/static"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/edsupstream"
 	"github.com/solo-io/go-utils/contextutils"
 	core "github.com/solo-io/solo-kit/pkg/api/v1/resources/core"
@@ -128,6 +129,15 @@ func (s *Extension) GetBackendForRef(ctx context.Context, obj query.From, backen
 	if found == nil {
 		return nil, query.ErrUnresolvedReference, true
 	}
+
+	// even if we find it, it must have the referenced port
+	if backend.Port == nil ||
+		slices.FindFunc(found.Spec.Ports, func(p *networking.ServicePort) bool {
+			return p.Number == uint32(*backend.Port)
+		}) == nil {
+		return nil, query.ErrUnresolvedReference, true
+	}
+
 	return found, nil, true
 }
 
@@ -187,18 +197,23 @@ func buildUpstreams(
 						Namespace: se.Namespace,
 						Cluster:   "", // TODO we should be able to populate this I think
 						Labels: maps.MergeCopy(se.Labels, map[string]string{
-							edsupstream.InternalEDSLabel:      "enabled",
 							internalServiceEntryKeyLabel:      se.GetNamespace() + "/" + se.GetName(),
 							internalServiceEntryPortLabel:     strconv.Itoa(int(port.GetNumber())),
 							internalServiceEntryHostLabel:     hostname,
 							internalServiceEntryLocationLabel: se.Spec.Location.String(),
+
+							// use edsupstream plugin to get EDS on a static Upstream
+							edsupstream.InternalEDSLabel: "enabled",
 						}),
 						Annotations: se.Annotations,
-
-						// HACK
-						// here we create an upstream with no upstream type
-						// this may be a bad idea, but I'm going to try it
-						// it would help evade ProcessUpstream impls that shouldn't run
+					},
+					// we only use the spec to propagate SNI info
+					UpstreamType: &v1.Upstream_Static{
+						Static: &static.UpstreamSpec{
+							Hosts: []*static.Host{{
+								SniAddr: hostname,
+							}},
+						},
 					},
 				}
 
