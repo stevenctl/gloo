@@ -115,7 +115,7 @@ func translate(ctx context.Context, settings *gloov1.Settings, translator setup.
 	}
 
 	// false here should be ok - plugins should set eds on eds clusters.
-	cluster, _ := translator.NewClusterTranslator(ctx, settings).TranslateCluster(params, up, false)
+	cluster, _ := translator.NewClusterTranslator(ctx, settings).TranslateCluster(params, up)
 	if cluster == nil {
 		return nil, 0
 	}

@@ -386,7 +386,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	})
 
 	s.destRules = NewDestRuleIndex(s.istioClient)
-	epPerClient := NewIndexedEndpoints(logger.Desugar(), s.uniqueClients, glooEndpoints, s.destRules)
+	epPerClient := NewPerClientEnvoyEndpoints(logger.Desugar(), s.uniqueClients, glooEndpoints, s.destRules)
 	usPerClient := NewIndexedUpstreams(ctx, s.translator, finalUpstreams, s.uniqueClients, secrets, s.proxyTranslator.settings, s.destRules)
 	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.uniqueClients, s.mostXdsSnapshots, epPerClient, usPerClient)
 

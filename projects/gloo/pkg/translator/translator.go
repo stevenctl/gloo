@@ -45,10 +45,12 @@ type Translator interface {
 	) (envoycache.Snapshot, reporter.ResourceReports, *validationapi.ProxyReport)
 }
 type ClusterTranslator interface {
+	// Translate converts a Upstream CR into an xDS Snapshot
+	// Any errors or warnings that are encountered during translation are returned, along with the
+	// envoy cluster.
 	TranslateCluster(
 		params plugins.Params,
 		upstream *v1.Upstream,
-		eds bool,
 	) (*envoy_config_cluster_v3.Cluster, []error)
 }
 

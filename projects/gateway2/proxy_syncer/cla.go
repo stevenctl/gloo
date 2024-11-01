@@ -93,18 +93,18 @@ func (c uccWithEndpoints) Equals(in uccWithEndpoints) bool {
 	return c.Client.Equals(in.Client) && c.EndpointsHash == in.EndpointsHash
 }
 
-type IndexedEndpoints struct {
+type PerClientEnvoyEndpoints struct {
 	endpoints krt.Collection[uccWithEndpoints]
 	index     krt.Index[string, uccWithEndpoints]
 }
 
-func (ie *IndexedEndpoints) FetchEndpointsForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithEndpoints {
+func (ie *PerClientEnvoyEndpoints) FetchEndpointsForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithEndpoints {
 	return krt.Fetch(kctx, ie.endpoints, krt.FilterIndex(ie.index, ucc.ResourceName()))
 }
 
-func NewIndexedEndpoints(logger *zap.Logger, uccs krt.Collection[krtcollections.UniqlyConnectedClient],
+func NewPerClientEnvoyEndpoints(logger *zap.Logger, uccs krt.Collection[krtcollections.UniqlyConnectedClient],
 	glooEndpoints krt.Collection[EndpointsForUpstream],
-	destinationRulesIndex DestinationRuleIndex) IndexedEndpoints {
+	destinationRulesIndex DestinationRuleIndex) PerClientEnvoyEndpoints {
 
 	clas := krt.NewManyCollection(glooEndpoints, func(kctx krt.HandlerContext, ep EndpointsForUpstream) []uccWithEndpoints {
 		uccs := krt.Fetch(kctx, uccs)
@@ -124,7 +124,7 @@ func NewIndexedEndpoints(logger *zap.Logger, uccs krt.Collection[krtcollections.
 		return []string{ucc.Client.ResourceName()}
 	})
 
-	return IndexedEndpoints{
+	return PerClientEnvoyEndpoints{
 		endpoints: clas,
 		index:     idx,
 	}
@@ -161,7 +161,7 @@ func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
 }
 
 func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.UniqlyConnectedClient],
-	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie IndexedEndpoints, iu IndexedUpstreams) krt.Collection[xdsSnapWrapper] {
+	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie PerClientEnvoyEndpoints, iu IndexedUpstreams) krt.Collection[xdsSnapWrapper] {
 
 	xdsSnapshotsForUcc := krt.NewCollection(uccCol, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
 		maybeMostlySnap := krt.FetchOne(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))

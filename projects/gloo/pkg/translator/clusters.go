@@ -70,16 +70,20 @@ func (t *translatorInstance) computeClusters(
 	return clusters, clusterToUpstreamMap
 }
 
+// This function is intented to be used when translating a single upstream outside of the context of a full snapshot.
+// This happens in GGv2 krt implementation.
 func (t *translatorInstance) TranslateCluster(
 	params plugins.Params,
 	upstream *v1.Upstream,
-	eds bool,
 ) (*envoy_config_cluster_v3.Cluster, []error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
 	for _, p := range t.pluginRegistry.GetUpstreamPlugins() {
 		p.Init(plugins.InitParams{Ctx: params.Ctx, Settings: t.settings})
 	}
+	// as we don't know if we have endpoints for this upstream,
+	// we will let the upstream plugins will set the cluster type
+	eds := false
 	c, err := t.computeCluster(params, upstream, eds)
 	if c != nil && c.GetEdsClusterConfig() != nil {
 		endpointClusterName, err2 := GetEndpointClusterName(c.GetName(), upstream)
