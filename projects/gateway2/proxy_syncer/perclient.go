@@ -49,6 +49,8 @@ func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.Uniql
 		// for now, a manual audit showed that these only add clusters and listeners. As we don't touch the listeners,
 		// we just need to account for potentially missing clusters.
 		for name, cluster := range genericSnap.Clusters.Items {
+			// only copy clusters that don't exist. as we do cluster translation per client,
+			// our clusters might be slightly different.
 			if _, ok := clusterResources.Items[name]; !ok {
 				clusterResources.Items[name] = cluster
 				clustersHash ^= ggv2utils.HashProto(cluster.ResourceProto().(*envoy_config_cluster_v3.Cluster))

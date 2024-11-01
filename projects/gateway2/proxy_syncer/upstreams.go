@@ -164,6 +164,9 @@ func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, dest
 			}
 			minHealthPercent := outlier.GetMinHealthPercent()
 			if minHealthPercent >= 0 {
+				if up.GetLoadBalancerConfig() == nil {
+					up.LoadBalancerConfig = &gloov1.LoadBalancerConfig{}
+				}
 				up.GetLoadBalancerConfig().HealthyPanicThreshold = wrapperspb.Double(float64(minHealthPercent))
 			}
 
