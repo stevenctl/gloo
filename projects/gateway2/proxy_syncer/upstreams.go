@@ -153,18 +153,18 @@ func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, dest
 			if outlier.GetMaxEjectionPercent() > 0 {
 				out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.GetMaxEjectionPercent())}
 			}
-			if outlier.SplitExternalLocalOriginErrors {
+			if outlier.GetSplitExternalLocalOriginErrors() {
 				out.SplitExternalLocalOriginErrors = true
-				if outlier.ConsecutiveLocalOriginFailures.GetValue() > 0 {
-					out.ConsecutiveLocalOriginFailure = &wrapperspb.UInt32Value{Value: outlier.ConsecutiveLocalOriginFailures.Value}
+				if outlier.GetConsecutiveLocalOriginFailures().GetValue() > 0 {
+					out.ConsecutiveLocalOriginFailure = &wrapperspb.UInt32Value{Value: outlier.GetConsecutiveLocalOriginFailures().Value}
 					out.EnforcingConsecutiveLocalOriginFailure = &wrapperspb.UInt32Value{Value: 100}
 				}
 				// SuccessRate based outlier detection should be disabled.
 				out.EnforcingLocalOriginSuccessRate = &wrapperspb.UInt32Value{Value: 0}
 			}
-			minHealthPercent := outlier.MinHealthPercent
+			minHealthPercent := outlier.GetMinHealthPercent()
 			if minHealthPercent >= 0 {
-				up.LoadBalancerConfig.HealthyPanicThreshold = wrapperspb.Double(float64(minHealthPercent))
+				up.GetLoadBalancerConfig().HealthyPanicThreshold = wrapperspb.Double(float64(minHealthPercent))
 			}
 
 			up.OutlierDetection = out
