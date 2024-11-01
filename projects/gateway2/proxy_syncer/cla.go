@@ -2,6 +2,7 @@ package proxy_syncer
 
 import (
 	"fmt"
+	"hash/fnv"
 
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_config_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
@@ -111,11 +112,11 @@ func NewPerClientEnvoyEndpoints(logger *zap.Logger, uccs krt.Collection[krtcolle
 		uccs := krt.Fetch(kctx, uccs)
 		uccWithEndpointsRet := make([]uccWithEndpoints, 0, len(uccs))
 		for _, ucc := range uccs {
-			cla := applyDestRulesForHostnames(logger, kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
+			cla, additionalHash := applyDestRulesForHostnames(logger, kctx, destinationRulesIndex, ucc.Namespace, ep, ucc)
 			uccWithEndpointsRet = append(uccWithEndpointsRet, uccWithEndpoints{
 				Client:        ucc,
 				Endpoints:     resource.NewEnvoyResource(cla),
-				EndpointsHash: ep.lbEpsEqualityHash,
+				EndpointsHash: ep.lbEpsEqualityHash ^ additionalHash,
 				endpointsName: ep.ResourceName(),
 			})
 		}
@@ -131,15 +132,20 @@ func NewPerClientEnvoyEndpoints(logger *zap.Logger, uccs krt.Collection[krtcolle
 	}
 }
 
-func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, ep EndpointsForUpstream, c krtcollections.UniqlyConnectedClient) *envoy_config_endpoint_v3.ClusterLoadAssignment {
+func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, ep EndpointsForUpstream, c krtcollections.UniqlyConnectedClient) (*envoy_config_endpoint_v3.ClusterLoadAssignment, uint64) {
 	// host that would match the dest rule from the endpoints.
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
 
 	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, ep.Hostname, c.Labels)
+	var additionalHash uint64
 	var priorityInfo *PriorityInfo
 	if destrule != nil {
 		priorityInfo = getPriorityInfoFromDestrule(*destrule)
+		hasher := fnv.New64()
+		hasher.Write([]byte(destrule.UID))
+		hasher.Write([]byte(fmt.Sprintf("%v", destrule.Generation)))
+		additionalHash = hasher.Sum64()
 	}
 	lbInfo := LoadBalancingInfo{
 		PodLabels:    c.Labels,
@@ -147,7 +153,7 @@ func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, des
 		PriorityInfo: priorityInfo,
 	}
 
-	return prioritizeWithLbInfo(logger, ep, lbInfo)
+	return prioritizeWithLbInfo(logger, ep, lbInfo), additionalHash
 }
 
 func getPriorityInfoFromDestrule(destrules DestinationRuleWrapper) *PriorityInfo {
