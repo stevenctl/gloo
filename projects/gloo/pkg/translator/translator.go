@@ -43,6 +43,8 @@ type Translator interface {
 		params plugins.Params,
 		proxy *v1.Proxy,
 	) (envoycache.Snapshot, reporter.ResourceReports, *validationapi.ProxyReport)
+}
+type ClusterTranslator interface {
 	TranslateCluster(
 		params plugins.Params,
 		upstream *v1.Upstream,

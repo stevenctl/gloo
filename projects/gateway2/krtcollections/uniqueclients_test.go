@@ -75,7 +75,8 @@ func TestUniqueClients(t *testing.T) {
 			pods := NewLocalityPodsCollection(nodes, krttest.GetMockCollection[*corev1.Pod](mock))
 			pods.Synced().WaitUntilSynced(context.Background().Done())
 
-			cb, ucc := NewUniquelyConnectedClients(context.Background(), pods)
+			cb, uccBuilder := NewUniquelyConnectedClients()
+			ucc := uccBuilder(context.Background(), pods)
 
 			for i, r := range tc.requests {
 				for j := 0; j < 10; j++ { // simulate 10 requests that are the same client
