@@ -6,7 +6,6 @@ import (
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	envoy_config_endpoint_v3 "github.com/envoyproxy/go-control-plane/envoy/config/endpoint/v3"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
-	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 	envoycache "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/cache"
 	"github.com/solo-io/solo-kit/pkg/api/v1/control-plane/resource"
 	"go.uber.org/zap"
@@ -28,6 +27,8 @@ func (c EndpointResources) Equals(in EndpointResources) bool {
 	return c.UpstreamRef == in.UpstreamRef && c.EndpointsVersion == in.EndpointsVersion
 }
 
+// TODO: this is needed temporary while we don't have the per-upstream translation done.
+// once the plugins are fixed to support it, we can have the proxy translation skip upstreams/endpoints and remove this collection
 func newEnvoyEndpoints(glooEndpoints krt.Collection[EndpointsForUpstream]) krt.Collection[EndpointResources] {
 
 	clas := krt.NewCollection(glooEndpoints, func(_ krt.HandlerContext, ep EndpointsForUpstream) *EndpointResources {
@@ -138,7 +139,7 @@ func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, des
 	destrule := destinationRulesIndex.FetchDestRulesFor(kctx, workloadNs, ep.Hostname, c.Labels)
 	var priorityInfo *PriorityInfo
 	if destrule != nil {
-		priorityInfo = getDestruleFor(*destrule)
+		priorityInfo = getPriorityInfoFromDestrule(*destrule)
 	}
 	lbInfo := LoadBalancingInfo{
 		PodLabels:    c.Labels,
@@ -149,7 +150,7 @@ func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, des
 	return prioritizeWithLbInfo(logger, ep, lbInfo)
 }
 
-func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
+func getPriorityInfoFromDestrule(destrules DestinationRuleWrapper) *PriorityInfo {
 	localityLb := destrules.Spec.GetTrafficPolicy().GetLoadBalancer().GetLocalityLbSetting()
 	if localityLb == nil {
 		return nil
@@ -158,52 +159,4 @@ func getDestruleFor(destrules DestinationRuleWrapper) *PriorityInfo {
 		FailoverPriority: NewPriorities(localityLb.GetFailoverPriority()),
 		Failover:         localityLb.GetFailover(),
 	}
-}
-
-func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.UniqlyConnectedClient],
-	mostXdsSnapshots krt.Collection[xdsSnapWrapper], ie PerClientEnvoyEndpoints, iu IndexedUpstreams) krt.Collection[xdsSnapWrapper] {
-
-	xdsSnapshotsForUcc := krt.NewCollection(uccCol, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *xdsSnapWrapper {
-		maybeMostlySnap := krt.FetchOne(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
-		if maybeMostlySnap == nil {
-			return nil
-		}
-		genericSnap := maybeMostlySnap.snap
-		clustersForUcc := iu.FetchClustersForClient(kctx, ucc)
-
-		clustersProto := make([]envoycache.Resource, 0, len(clustersForUcc))
-		var clustersHash uint64
-		for _, ep := range clustersForUcc {
-			clustersProto = append(clustersProto, ep.Cluster)
-			clustersHash ^= ep.ClusterVersion
-		}
-		clustersVersion := fmt.Sprintf("%d", clustersHash)
-
-		endpointsForUcc := ie.FetchEndpointsForClient(kctx, ucc)
-		endpointsProto := make([]envoycache.Resource, 0, len(endpointsForUcc))
-		var endpointsHash uint64
-		for _, ep := range endpointsForUcc {
-			endpointsProto = append(endpointsProto, ep.Endpoints)
-			endpointsHash ^= ep.EndpointsHash
-		}
-
-		mostlySnap := *maybeMostlySnap
-
-		mostlySnap.proxyKey = ucc.ResourceName()
-		mostlySnap.snap = &xds.EnvoySnapshot{
-			Clusters:  envoycache.NewResources(clustersVersion, clustersProto),
-			Endpoints: envoycache.NewResources(fmt.Sprintf("%s-%d", clustersVersion, endpointsHash), endpointsProto),
-			Routes:    genericSnap.Routes,
-			Listeners: genericSnap.Listeners,
-		}
-		l.Debug("snapshotPerClient", zap.String("proxyKey", mostlySnap.proxyKey),
-			zap.Stringer("Listeners", resourcesStringer(mostlySnap.snap.Listeners)),
-			zap.Stringer("Clusters", resourcesStringer(mostlySnap.snap.Clusters)),
-			zap.Stringer("Routes", resourcesStringer(mostlySnap.snap.Routes)),
-			zap.Stringer("Endpoints", resourcesStringer(mostlySnap.snap.Endpoints)),
-		)
-
-		return &mostlySnap
-	})
-	return xdsSnapshotsForUcc
 }

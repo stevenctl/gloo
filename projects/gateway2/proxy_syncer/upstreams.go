@@ -38,23 +38,23 @@ func (c uccWithCluster) Equals(in uccWithCluster) bool {
 	return c.Client.Equals(in.Client) && c.ClusterVersion == in.ClusterVersion
 }
 
-type IndexedUpstreams struct {
+type PerClientEnvoyClusters struct {
 	clusters krt.Collection[uccWithCluster]
 	index    krt.Index[string, uccWithCluster]
 }
 
-func (iu *IndexedUpstreams) FetchClustersForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithCluster {
+func (iu *PerClientEnvoyClusters) FetchClustersForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithCluster {
 	return krt.Fetch(kctx, iu.clusters, krt.FilterIndex(iu.index, ucc.ResourceName()))
 }
 
-func NewIndexedUpstreams(
+func NewPerClientEnvoyClusters(
 	ctx context.Context,
 	translator setup.TranslatorFactory,
 	upstreams krt.Collection[UpstreamWrapper],
 	uccs krt.Collection[krtcollections.UniqlyConnectedClient],
 	ks krt.Collection[krtcollections.ResourceWrapper[*gloov1.Secret]],
 	settings krt.Singleton[glookubev1.Settings],
-	destinationRulesIndex DestinationRuleIndex) IndexedUpstreams {
+	destinationRulesIndex DestinationRuleIndex) PerClientEnvoyClusters {
 	ctx = contextutils.WithLogger(ctx, "upstream-translator")
 	logger := contextutils.LoggerFrom(ctx).Desugar()
 
@@ -97,7 +97,7 @@ func NewIndexedUpstreams(
 		return []string{ucc.Client.ResourceName()}
 	})
 
-	return IndexedUpstreams{
+	return PerClientEnvoyClusters{
 		clusters: clusters,
 		index:    idx,
 	}

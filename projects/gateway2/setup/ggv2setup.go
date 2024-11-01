@@ -109,7 +109,12 @@ func StartGGv2(ctx context.Context,
 		settingsGVR,
 		krt.WithName("GlooSettings"))
 
-	ucc := uccBuilder(ctx, augmentedPods)
+	var ucc krt.Collection[krtcollections.UniqlyConnectedClient]
+	if initialSettings.Spec.GetGloo().GetIstioOptions().GetEnableIntegration().GetValue() {
+		ucc = uccBuilder(ctx, augmentedPods)
+	} else {
+		ucc = krt.NewStatic(&krtcollections.UniqlyConnectedClient{}, true).AsCollection()
+	}
 
 	settingsSingle := krt.NewSingleton(func(ctx krt.HandlerContext) *glookubev1.Settings {
 		s := krt.FetchOne(ctx, setting,

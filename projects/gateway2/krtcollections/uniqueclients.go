@@ -43,6 +43,9 @@ type UniqlyConnectedClient struct {
 }
 
 func (c UniqlyConnectedClient) ResourceName() string {
+	if c.resourceName == "" {
+		return "<anyclient>"
+	}
 	return c.resourceName
 }
 

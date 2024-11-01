@@ -82,7 +82,6 @@ type EndpointsForUpstream struct {
 	clusterName string
 
 	lbEpsEqualityHash uint64
-	logger            *zap.Logger
 }
 
 func NewEndpointsForUpstream(us UpstreamWrapper, logger *zap.Logger) *EndpointsForUpstream {

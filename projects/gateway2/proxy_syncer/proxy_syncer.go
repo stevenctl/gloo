@@ -68,6 +68,7 @@ type ProxySyncer struct {
 	controllerName string
 	writeNamespace string
 
+	initialSettings *glookubev1.Settings
 	inputs          *GatewayInputChannels
 	mgr             manager.Manager
 	k8sGwExtensions extensions.K8sGatewayExtensions
@@ -115,6 +116,7 @@ var kubeGatewayProxyLabels = map[string]string{
 // The provided GatewayInputChannels are used to trigger syncs.
 func NewProxySyncer(
 	ctx context.Context,
+	initialSettings *glookubev1.Settings,
 	settings krt.Singleton[glookubev1.Settings],
 	controllerName string,
 	writeNamespace string,
@@ -132,6 +134,7 @@ func NewProxySyncer(
 ) *ProxySyncer {
 
 	return &ProxySyncer{
+		initialSettings:     initialSettings,
 		controllerName:      controllerName,
 		writeNamespace:      writeNamespace,
 		inputs:              inputs,
@@ -385,10 +388,14 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 		return xdsSnap
 	})
 
-	s.destRules = NewDestRuleIndex(s.istioClient)
+	if s.initialSettings.Spec.GetGloo().GetIstioOptions().GetEnableIntegration().GetValue() {
+		s.destRules = NewDestRuleIndex(s.istioClient)
+	} else {
+		s.destRules = NewEmptyDestRuleIndex()
+	}
 	epPerClient := NewPerClientEnvoyEndpoints(logger.Desugar(), s.uniqueClients, glooEndpoints, s.destRules)
-	usPerClient := NewIndexedUpstreams(ctx, s.translator, finalUpstreams, s.uniqueClients, secrets, s.proxyTranslator.settings, s.destRules)
-	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.uniqueClients, s.mostXdsSnapshots, epPerClient, usPerClient)
+	clustersPerClient := NewPerClientEnvoyClusters(ctx, s.translator, finalUpstreams, s.uniqueClients, secrets, s.proxyTranslator.settings, s.destRules)
+	s.perclientSnapCollection = snapshotPerClient(logger.Desugar(), s.uniqueClients, s.mostXdsSnapshots, epPerClient, clustersPerClient)
 
 	// build ProxyList collection as glooProxies change
 	proxiesToReconcile := krt.NewSingleton(func(kctx krt.HandlerContext) *proxyList {

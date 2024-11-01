@@ -155,6 +155,7 @@ func NewControllerBuilder(ctx context.Context, cfg StartConfig) (*ControllerBuil
 	// Create the proxy syncer for the Gateway API resources
 	proxySyncer := proxy_syncer.NewProxySyncer(
 		ctx,
+		cfg.InitialSettings,
 		cfg.Settings,
 		wellknown.GatewayControllerName,
 		setup.GetWriteNamespace(&cfg.InitialSettings.Spec),
