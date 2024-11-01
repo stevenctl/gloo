@@ -3,7 +3,9 @@ package proxy_syncer
 import (
 	"fmt"
 
+	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
+	ggv2utils "github.com/solo-io/gloo/projects/gateway2/utils"
 	"github.com/solo-io/gloo/projects/gloo/pkg/xds"
 	envoycache "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/cache"
 	"go.uber.org/zap"
@@ -39,9 +41,24 @@ func snapshotPerClient(l *zap.Logger, uccCol krt.Collection[krtcollections.Uniql
 
 		mostlySnap := *maybeMostlySnap
 
+		clusterResources := envoycache.NewResources(clustersVersion, clustersProto)
+		// add missing generated resource from GeneratedResources plugins.
+		// To be able to do individual upstream translation, We need to redo the GeneratedResources,
+		// so they don't take as input the entire xds snapshot. the main offender is the tunneling plugin.
+		//
+		// for now, a manual audit showed that these only add clusters and listeners. As we don't touch the listeners,
+		// we just need to account for potentially missing clusters.
+		for name, cluster := range genericSnap.Clusters.Items {
+			if _, ok := clusterResources.Items[name]; !ok {
+				clusterResources.Items[name] = cluster
+				clustersHash ^= ggv2utils.HashProto(cluster.ResourceProto().(*envoy_config_cluster_v3.Cluster))
+			}
+		}
+		clusterResources.Version = fmt.Sprintf("%d", clustersHash)
+
 		mostlySnap.proxyKey = ucc.ResourceName()
 		mostlySnap.snap = &xds.EnvoySnapshot{
-			Clusters:  envoycache.NewResources(clustersVersion, clustersProto),
+			Clusters:  clusterResources,
 			Endpoints: envoycache.NewResources(fmt.Sprintf("%s-%d", clustersVersion, endpointsHash), endpointsProto),
 			Routes:    genericSnap.Routes,
 			Listeners: genericSnap.Listeners,
