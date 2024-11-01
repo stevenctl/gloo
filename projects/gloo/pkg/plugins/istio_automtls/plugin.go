@@ -49,7 +49,6 @@ func (p *plugin) Init(params plugins.InitParams) {
 }
 
 func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *envoy_config_cluster_v3.Cluster) error {
-	println("stevenctl: plugin called")
 	var socketmatches []*envoy_config_cluster_v3.Cluster_TransportSocketMatch
 
 	sslConfig := in.GetSslConfig()
@@ -58,8 +57,6 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	// 2) the upstream has not disabled auto mtls
 	// 3) the upstream has no sslConfig
 	if p.settings.GetGloo().GetIstioOptions().GetEnableAutoMtls().GetValue() && !in.GetDisableIstioAutoMtls().GetValue() && sslConfig == nil {
-
-		println("stevenctl: plugin actually processing")
 		// Istio automtls config is not applied if istio integration is disabled on the helm chart.
 		// When istio integration is disabled via istioSds.enabled=false, there is no sds or istio-proxy sidecar present
 		if !p.settings.GetGloo().GetIstioOptions().GetEnableIntegration().GetValue() {
@@ -82,15 +79,7 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 			}
 		}
 		out.TransportSocketMatches = socketmatches
-	} else {
-		println(
-			"stevenctl: not running mtls cuz: ",
-			p.settings.GetGloo().GetIstioOptions().GetEnableAutoMtls().GetValue(),
-			in.GetDisableIstioAutoMtls().GetValue(),
-			sslConfig == nil,
-		)
 	}
-
 	return nil
 }
 

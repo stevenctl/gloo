@@ -1,6 +1,7 @@
 package proxy_syncer
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 
@@ -134,7 +135,8 @@ func getEndpoints(eps []krtcollections.EndpointWithMd, lbinfo LoadBalancingInfo)
 }
 
 func applyFailoverPriorityPerLocality(
-	eps []krtcollections.EndpointWithMd, lbinfo LoadBalancingInfo) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
+	eps []krtcollections.EndpointWithMd, lbinfo LoadBalancingInfo,
+) []*envoy_config_endpoint_v3.LocalityLbEndpoints {
 	// key is priority, value is the index of LocalityLbEndpoints.LbEndpoints
 	priorityMap := map[int][]int{}
 	for i, ep := range eps {
@@ -227,6 +229,7 @@ func applyLocalityFailover(
 		}
 	}
 }
+
 func LbPriority(proxyLocality, endpointsLocality *envoy_config_core_v3.Locality) int {
 	if proxyLocality.GetRegion() == endpointsLocality.GetRegion() {
 		if proxyLocality.GetZone() == endpointsLocality.GetZone() {
