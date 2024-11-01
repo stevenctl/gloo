@@ -21,7 +21,6 @@ import (
 )
 
 func TestUniqueClients(t *testing.T) {
-	g := NewWithT(t)
 	testCases := []struct {
 		name     string
 		inputs   []any
@@ -70,6 +69,7 @@ func TestUniqueClients(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
+			g := NewWithT(t)
 			mock := krttest.NewMock(t, tc.inputs)
 			nodes := NewNodeMetadataCollection(krttest.GetMockCollection[*corev1.Node](mock))
 			pods := NewLocalityPodsCollection(nodes, krttest.GetMockCollection[*corev1.Pod](mock))
@@ -77,6 +77,7 @@ func TestUniqueClients(t *testing.T) {
 
 			cb, uccBuilder := NewUniquelyConnectedClients()
 			ucc := uccBuilder(context.Background(), pods)
+			ucc.Synced().WaitUntilSynced(context.Background().Done())
 
 			for i, r := range tc.requests {
 				for j := 0; j < 10; j++ { // simulate 10 requests that are the same client

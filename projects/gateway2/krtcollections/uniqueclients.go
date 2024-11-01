@@ -165,7 +165,7 @@ func (x *callbacksCollection) del(sid int64) *UniqlyConnectedClient {
 	return nil
 }
 
-func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) (string, error) {
+func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) (string, bool, error) {
 
 	var pod *LocalityPod
 	if r.GetNode() != nil {
@@ -173,14 +173,14 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 		k := krt.Key[LocalityPod](krt.Named{Name: podRef.Name, Namespace: podRef.Namespace}.ResourceName())
 		pod = x.augmentedPods.GetKey(k)
 	}
-
+	addedNew := false
 	x.stateLock.Lock()
 	defer x.stateLock.Unlock()
 	c, ok := x.clients[sid]
 	if !ok {
 		if pod == nil {
 			// error if we can't get the pod
-			return "", fmt.Errorf("pod not found for node %v", r.GetNode())
+			return "", false, fmt.Errorf("pod not found for node %v", r.GetNode())
 		}
 		x.logger.Debug("adding xds client", zap.Any("locality", pod.Locality), zap.String("ns", pod.Namespace), zap.Any("labels", pod.AugmentedLabels))
 		// TODO: modify request to include the label that are relevant for the client?
@@ -191,9 +191,10 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 		x.uniqClientsCount[ucc.resourceName] = currentUnique + 1
 		if currentUnique == 0 {
 			x.uniqClients[ucc.resourceName] = ucc
+			addedNew = true
 		}
 	}
-	return c.uniqueClientName, nil
+	return c.uniqueClientName, addedNew, nil
 
 }
 
@@ -217,7 +218,7 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 		// we are disabled
 		return nil
 	}
-	ucc, err := x.add(sid, r)
+	ucc, isNew, err := x.add(sid, r)
 	if err != nil {
 		x.logger.Debug("error processing xds client", zap.Error(err))
 		return err
@@ -237,8 +238,9 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 		// the unique client resource name as well.
 		nodeMd.GetFields()[xds.RoleKey] = structpb.NewStringValue(ucc)
 		r.GetNode().Metadata = nodeMd
-
-		x.trigger.TriggerRecomputation()
+		if isNew {
+			x.trigger.TriggerRecomputation()
+		}
 	}
 	return nil
 }
