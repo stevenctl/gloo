@@ -262,8 +262,19 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 	ctx = contextutils.WithLogger(ctx, "k8s-gw-proxy-syncer")
 	logger := contextutils.LoggerFrom(ctx)
 
-	// TODO: handle cfgmap noisiness? (https://github.com/solo-io/gloo/blob/main/projects/gloo/pkg/api/converters/kube/artifact_converter.go#L31)
-	configMapClient := kclient.New[*corev1.ConfigMap](s.istioClient)
+	configMapClient := kclient.NewFiltered[*corev1.ConfigMap](s.istioClient, kclient.Filter{
+		ObjectTransform: func(obj any) (any, error) {
+			t, ok := obj.(metav1.ObjectMetaAccessor)
+			if !ok {
+				// shouldn't happen
+				return obj, nil
+			}
+			// ManagedFields is large and we never use it
+			t.GetObjectMeta().SetManagedFields(nil)
+			// Annotation is never used - and may cause jitter as these are used for leader election.
+			t.GetObjectMeta().SetAnnotations(nil)
+			return obj, nil
+		}})
 	configMaps := krt.WrapClient(configMapClient, krt.WithName("ConfigMaps"))
 
 	secretClient := kclient.New[*corev1.Secret](s.istioClient)

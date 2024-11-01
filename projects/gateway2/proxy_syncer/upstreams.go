@@ -55,9 +55,11 @@ func NewIndexedUpstreams(
 	ks krt.Collection[krtcollections.ResourceWrapper[*gloov1.Secret]],
 	settings krt.Singleton[glookubev1.Settings],
 	destinationRulesIndex DestinationRuleIndex) IndexedUpstreams {
+	ctx = contextutils.WithLogger(ctx, "upstream-translator")
 	logger := contextutils.LoggerFrom(ctx).Desugar()
 
 	clusters := krt.NewManyCollection(upstreams, func(kctx krt.HandlerContext, up UpstreamWrapper) []uccWithCluster {
+		logger := logger.With(zap.Stringer("upstream", up))
 		uccs := krt.Fetch(kctx, uccs)
 		uccWithClusterRet := make([]uccWithCluster, 0, len(uccs))
 		secrets := krt.Fetch(kctx, ks)
@@ -65,6 +67,7 @@ func NewIndexedUpstreams(
 		settings := &ksettings.Spec
 
 		for _, ucc := range uccs {
+			logger.Debug("applying destination rules for upstream", zap.String("ucc", ucc.ResourceName()))
 			upstream, name := applyDestRulesForUpstream(logger, kctx, destinationRulesIndex, ucc.Namespace, up, ucc)
 
 			latestSnap := &gloosnapshot.ApiSnapshot{}

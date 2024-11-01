@@ -75,6 +75,9 @@ func (t *translatorInstance) TranslateCluster(
 ) (*envoy_config_cluster_v3.Cluster, []error) {
 	t.lock.Lock()
 	defer t.lock.Unlock()
+	for _, p := range t.pluginRegistry.GetUpstreamPlugins() {
+		p.Init(plugins.InitParams{Ctx: params.Ctx, Settings: t.settings})
+	}
 	c, err := t.computeCluster(params, upstream, eds)
 	if c != nil && c.GetEdsClusterConfig() != nil {
 		endpointClusterName, err2 := GetEndpointClusterName(c.GetName(), upstream)
