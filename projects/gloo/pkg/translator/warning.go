@@ -1,11 +1,11 @@
 package translator
 
 type Warning struct {
-	Message error
+	Message string
 }
 
 func (w *Warning) Error() string {
-	return w.Message.Error()
+	return w.Message
 }
 func (w *Warning) Is(err error) bool {
 	_, ok := err.(*Warning)
@@ -14,9 +14,6 @@ func (w *Warning) Is(err error) bool {
 func (w *Warning) As(err any) bool {
 	_, ok := err.(*Warning)
 	return ok
-}
-func (w *Warning) Unwrap() error {
-	return w.Message
 }
 
 var _ error = new(Warning)

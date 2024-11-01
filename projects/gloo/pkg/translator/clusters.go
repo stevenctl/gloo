@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"errors"
+
 	envoy_config_cluster_v3 "github.com/envoyproxy/go-control-plane/envoy/config/cluster/v3"
 	envoy_config_core_v3 "github.com/envoyproxy/go-control-plane/envoy/config/core/v3"
 	"github.com/envoyproxy/go-control-plane/pkg/wellknown"
@@ -13,7 +15,6 @@ import (
 	_struct "github.com/golang/protobuf/ptypes/struct"
 	"github.com/golang/protobuf/ptypes/wrappers"
 	"github.com/rotisserie/eris"
-	errors "github.com/rotisserie/eris"
 	"github.com/solo-io/gloo/pkg/utils/api_conversion"
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	v1_options "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options"
@@ -55,7 +56,8 @@ func (t *translatorInstance) computeClusters(
 		}
 		cluster, errs := t.computeCluster(params, upstream, eds)
 		for _, err := range errs {
-			if errors.Is(err, &Warning{}) {
+			var warning *Warning
+			if errors.As(err, &warning) {
 				reports.AddWarning(upstream, err.Error())
 			} else {
 				reports.AddError(upstream, err)
@@ -162,7 +164,7 @@ func (t *translatorInstance) initializeCluster(
 			if t.settings.GetGateway().GetValidation().GetWarnMissingTlsSecret().GetValue() &&
 				errors.Is(err, utils.SslSecretNotFoundError) {
 				errorList = append(errorList, &Warning{
-					Message: err,
+					Message: err.Error(),
 				})
 			} else {
 				errorList = append(errorList, err)
@@ -401,7 +403,7 @@ func getDnsRefreshRate(us *v1.Upstream) (*duration.Duration, error) {
 
 	if refreshRate.AsDuration() < minimumDnsRefreshRate.AsDuration() {
 		return nil, &Warning{
-			Message: fmt.Errorf("dnsRefreshRate was set below minimum requirement (%s), ignoring configuration", minimumDnsRefreshRate),
+			Message: fmt.Sprintf("dnsRefreshRate was set below minimum requirement (%s), ignoring configuration", minimumDnsRefreshRate),
 		}
 	}
 
