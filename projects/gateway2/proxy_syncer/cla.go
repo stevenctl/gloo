@@ -131,7 +131,14 @@ func NewPerClientEnvoyEndpoints(logger *zap.Logger, uccs krt.Collection[krtcolle
 	}
 }
 
-func applyDestRulesForHostnames(logger *zap.Logger, kctx krt.HandlerContext, destinationRulesIndex DestinationRuleIndex, workloadNs string, ep EndpointsForUpstream, c krtcollections.UniqlyConnectedClient) (*envoy_config_endpoint_v3.ClusterLoadAssignment, uint64) {
+func applyDestRulesForHostnames(
+	logger *zap.Logger,
+	kctx krt.HandlerContext,
+	destinationRulesIndex DestinationRuleIndex,
+	workloadNs string,
+	ep krtcollections.EndpointsForUpstream,
+	c krtcollections.UniqlyConnectedClient,
+) (*envoy_config_endpoint_v3.ClusterLoadAssignment, uint64) {
 	// host that would match the dest rule from the endpoints.
 	// get the matching dest rule
 	// get the lb info from the dest rules and call prioritize
