@@ -7,6 +7,7 @@ import (
 
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	apiv1 "sigs.k8s.io/gateway-api/apis/v1"
@@ -219,6 +220,7 @@ func buildUpstreams(
 					// we only use the spec to propagate SNI info
 					UpstreamType: &v1.Upstream_Static{
 						Static: &static.UpstreamSpec{
+							UseTls: wrapperspb.Bool(false),
 							Hosts: []*static.Host{{
 								SniAddr: hostname,
 							}},

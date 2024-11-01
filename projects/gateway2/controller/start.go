@@ -87,6 +87,7 @@ type ControllerBuilder struct {
 }
 
 func NewControllerBuilder(ctx context.Context, cfg StartConfig) (*ControllerBuilder, error) {
+	println("RUNNING MY ACTUALLY NEW CODE")
 	var opts []zap.Opts
 	if cfg.Dev {
 		setupLog.Info("starting log in dev mode")
