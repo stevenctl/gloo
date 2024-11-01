@@ -213,6 +213,10 @@ func (x *callbacks) OnStreamRequest(sid int64, r *envoy_service_discovery_v3.Dis
 }
 
 func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) error {
+	if x.augmentedPods == nil {
+		// we are disabled
+		return nil
+	}
 	ucc, err := x.add(sid, r)
 	if err != nil {
 		x.logger.Debug("error processing xds client", zap.Error(err))

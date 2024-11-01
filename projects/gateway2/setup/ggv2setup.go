@@ -113,6 +113,7 @@ func StartGGv2(ctx context.Context,
 	if initialSettings.Spec.GetGloo().GetIstioOptions().GetEnableIntegration().GetValue() {
 		ucc = uccBuilder(ctx, augmentedPods)
 	} else {
+		uccBuilder(ctx, nil)
 		ucc = krt.NewStatic(&krtcollections.UniqlyConnectedClient{}, true).AsCollection()
 	}
 
