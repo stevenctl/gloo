@@ -136,15 +136,35 @@ func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, dest
 			name := getEndpointClusterName(u.Inner)
 			// do not mutate the original upstream
 			up := *u.Inner
-
 			out := &cluster.OutlierDetection{
 				Consecutive_5Xx:  outlier.GetConsecutive_5XxErrors(),
 				Interval:         outlier.GetInterval(),
 				BaseEjectionTime: outlier.GetBaseEjectionTime(),
 				// TODO: do the rest of them
 			}
+			if e := outlier.GetConsecutiveGatewayErrors(); e != nil {
+				v := e.GetValue()
+				out.ConsecutiveGatewayFailure = &wrapperspb.UInt32Value{Value: v}
+				if v > 0 {
+					v = 100
+				}
+				out.EnforcingConsecutiveGatewayFailure = &wrapperspb.UInt32Value{Value: v}
+			}
 			if outlier.GetMaxEjectionPercent() > 0 {
 				out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.GetMaxEjectionPercent())}
+			}
+			if outlier.SplitExternalLocalOriginErrors {
+				out.SplitExternalLocalOriginErrors = true
+				if outlier.ConsecutiveLocalOriginFailures.GetValue() > 0 {
+					out.ConsecutiveLocalOriginFailure = &wrapperspb.UInt32Value{Value: outlier.ConsecutiveLocalOriginFailures.Value}
+					out.EnforcingConsecutiveLocalOriginFailure = &wrapperspb.UInt32Value{Value: 100}
+				}
+				// SuccessRate based outlier detection should be disabled.
+				out.EnforcingLocalOriginSuccessRate = &wrapperspb.UInt32Value{Value: 0}
+			}
+			minHealthPercent := outlier.MinHealthPercent
+			if minHealthPercent >= 0 {
+				up.LoadBalancerConfig.HealthyPanicThreshold = wrapperspb.Double(float64(minHealthPercent))
 			}
 
 			up.OutlierDetection = out
