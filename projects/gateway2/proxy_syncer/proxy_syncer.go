@@ -52,7 +52,6 @@ import (
 	extauthv1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/enterprise/options/extauth/v1"
 	"github.com/solo-io/gloo/projects/gloo/pkg/syncer"
 	kubeupstreams "github.com/solo-io/gloo/projects/gloo/pkg/upstreams/kubernetes"
-	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/go-utils/contextutils"
 	envoycache "github.com/solo-io/solo-kit/pkg/api/v1/control-plane/cache"
 
@@ -104,12 +103,6 @@ func NewGatewayInputChannels() *GatewayInputChannels {
 	return &GatewayInputChannels{
 		genericEvent: ggv2utils.NewAsyncQueue[struct{}](),
 	}
-}
-
-// labels used to uniquely identify Proxies that are managed by the kube gateway controller
-var kubeGatewayProxyLabels = map[string]string{
-	// the proxy type key/value must stay in sync with the one defined in projects/gateway2/translator/gateway_translator.go
-	utils.ProxyTypeKey: utils.GatewayApiProxyValue,
 }
 
 // NewProxySyncer returns an implementation of the ProxySyncer
