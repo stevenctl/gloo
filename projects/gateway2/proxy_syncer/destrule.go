@@ -65,7 +65,7 @@ func newDestruleIndex(destRuleCollection krt.Collection[DestinationRuleWrapper])
 	idx := krt.NewIndex(destRuleCollection, func(d DestinationRuleWrapper) []NsWithHostname {
 		return []NsWithHostname{{
 			Ns:       d.Namespace,
-			Hostname: d.Spec.Host,
+			Hostname: d.Spec.GetHost(),
 		}}
 	})
 	return idx

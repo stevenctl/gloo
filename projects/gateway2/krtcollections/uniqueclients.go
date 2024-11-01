@@ -165,8 +165,8 @@ func (x *callbacksCollection) del(sid int64) *UniqlyConnectedClient {
 func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.DiscoveryRequest) (string, error) {
 
 	var pod *LocalityPod
-	if r.Node != nil {
-		podRef := getRef(r.Node)
+	if r.GetNode() != nil {
+		podRef := getRef(r.GetNode())
 		k := krt.Key[LocalityPod](krt.Named{Name: podRef.Name, Namespace: podRef.Namespace}.ResourceName())
 		pod = x.augmentedPods.GetKey(k)
 	}
@@ -177,11 +177,11 @@ func (x *callbacksCollection) add(sid int64, r *envoy_service_discovery_v3.Disco
 	if !ok {
 		if pod == nil {
 			// error if we can't get the pod
-			return "", fmt.Errorf("pod not found for node %v", r.Node)
+			return "", fmt.Errorf("pod not found for node %v", r.GetNode())
 		}
 		x.logger.Debug("adding xds client", zap.Any("locality", pod.Locality), zap.String("ns", pod.Namespace), zap.Any("labels", pod.AugmentedLabels))
 		// TODO: modify request to include the label that are relevant for the client?
-		ucc := newUniqlyConnectedClient(r.Node, pod.Namespace, pod.AugmentedLabels, pod.Locality)
+		ucc := newUniqlyConnectedClient(r.GetNode(), pod.Namespace, pod.AugmentedLabels, pod.Locality)
 		c = newConnectedClient(ucc.resourceName)
 		x.clients[sid] = c
 		currentUnique := x.uniqClientsCount[ucc.resourceName]
@@ -220,7 +220,7 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 		if nodeMd == nil {
 			nodeMd = &structpb.Struct{}
 		}
-		if nodeMd.Fields == nil {
+		if nodeMd.GetFields() == nil {
 			nodeMd.Fields = map[string]*structpb.Value{}
 		}
 
@@ -228,8 +228,8 @@ func (x *callbacksCollection) newStream(sid int64, r *envoy_service_discovery_v3
 		// NOTE: this changes the role to include the unique client. This is coupled
 		// with how the snapshot is inserted to the cache for the proxy - it needs to be done with
 		// the unique client resource name as well.
-		nodeMd.Fields[xds.RoleKey] = structpb.NewStringValue(ucc)
-		r.Node.Metadata = nodeMd
+		nodeMd.GetFields()[xds.RoleKey] = structpb.NewStringValue(ucc)
+		r.GetNode().Metadata = nodeMd
 
 		x.trigger.TriggerRecomputation()
 	}
@@ -292,7 +292,7 @@ func (s *simpleSyncer) HasSynced() bool {
 }
 
 func getRef(node *envoy_config_core_v3.Node) types.NamespacedName {
-	nns := node.Id
+	nns := node.GetId()
 	split := strings.SplitN(nns, ".", 2)
 	if len(split) != 2 {
 		return types.NamespacedName{}

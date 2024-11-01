@@ -143,8 +143,8 @@ func applyDestRulesForUpstream(logger *zap.Logger, kctx krt.HandlerContext, dest
 				BaseEjectionTime: outlier.GetBaseEjectionTime(),
 				// TODO: do the rest of them
 			}
-			if outlier.MaxEjectionPercent > 0 {
-				out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.MaxEjectionPercent)}
+			if outlier.GetMaxEjectionPercent() > 0 {
+				out.MaxEjectionPercent = &wrapperspb.UInt32Value{Value: uint32(outlier.GetMaxEjectionPercent())}
 			}
 
 			up.OutlierDetection = out

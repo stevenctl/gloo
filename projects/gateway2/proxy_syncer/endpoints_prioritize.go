@@ -98,10 +98,10 @@ func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo Lo
 		endpoints := getEndpoints(eps, lbInfo)
 		for _, ep := range endpoints {
 			ep.Locality = l
-			totalEndpoints += len(ep.LbEndpoints)
+			totalEndpoints += len(ep.GetLbEndpoints())
 		}
 
-		cla.Endpoints = append(cla.Endpoints, endpoints...)
+		cla.Endpoints = append(cla.GetEndpoints(), endpoints...)
 	}
 
 	if lbInfo.PriorityInfo != nil && lbInfo.PriorityInfo.FailoverPriority == nil {
@@ -116,7 +116,7 @@ func prioritizeWithLbInfo(logger *zap.Logger, ep EndpointsForUpstream, lbInfo Lo
 		}
 	}
 
-	logger.Debug("created cla", zap.String("cluster", cla.ClusterName), zap.Int("numAddresses", totalEndpoints))
+	logger.Debug("created cla", zap.String("cluster", cla.GetClusterName()), zap.Int("numAddresses", totalEndpoints))
 
 	// in theory we want to run endpoint plugins here.
 	// we only have one endpoint plugin, and it's not clear if it is in use. so
@@ -155,7 +155,7 @@ func applyFailoverPriorityPerLocality(
 		out[i].Priority = uint32(priority)
 		var weight uint32
 		for _, index := range priorityMap[priority] {
-			out[i].LbEndpoints = append(out[i].LbEndpoints, eps[index].LbEndpoint)
+			out[i].LbEndpoints = append(out[i].GetLbEndpoints(), eps[index].LbEndpoint)
 			weight += eps[index].GetLoadBalancingWeight().GetValue()
 		}
 		// reset weight
@@ -181,18 +181,18 @@ func applyLocalityFailover(
 	priorityMap := map[int][]int{}
 
 	// 1. calculate the LocalityLbEndpoints.Priority compared with proxy locality
-	for i, localityEndpoint := range loadAssignment.Endpoints {
+	for i, localityEndpoint := range loadAssignment.GetEndpoints() {
 		// if region/zone/subZone all match, the priority is 0.
 		// if region/zone match, the priority is 1.
 		// if region matches, the priority is 2.
 		// if locality not match, the priority is 3.
-		priority := LbPriority(proxyLocality, localityEndpoint.Locality)
+		priority := LbPriority(proxyLocality, localityEndpoint.GetLocality())
 		// region not match, apply failover settings when specified
 		// update localityLbEndpoints' priority to 4 if failover not match
 		if priority == 3 {
 			for _, failoverSetting := range failover {
-				if failoverSetting.From == proxyLocality.Region {
-					if localityEndpoint.Locality == nil || localityEndpoint.Locality.Region != failoverSetting.To {
+				if failoverSetting.GetFrom() == proxyLocality.GetRegion() {
+					if localityEndpoint.GetLocality() == nil || localityEndpoint.GetLocality().GetRegion() != failoverSetting.GetTo() {
 						priority = 4
 					}
 					break
@@ -203,8 +203,8 @@ func applyLocalityFailover(
 		// Since there are at most 5 priorities can be assigned using locality failover(0-4),
 		// we multiply the priority by 5 for maintaining the priorities already assigned.
 		// Afterwards the final priorities can be calculted from 0 (highest) to N (lowest) without skipping.
-		priorityInt := int(loadAssignment.Endpoints[i].Priority*5) + priority
-		loadAssignment.Endpoints[i].Priority = uint32(priorityInt)
+		priorityInt := int(loadAssignment.GetEndpoints()[i].GetPriority()*5) + priority
+		loadAssignment.GetEndpoints()[i].Priority = uint32(priorityInt)
 		priorityMap[priorityInt] = append(priorityMap[priorityInt], i)
 	}
 
@@ -222,7 +222,7 @@ func applyLocalityFailover(
 		if i != priority {
 			// the LocalityLbEndpoints index in ClusterLoadAssignment.Endpoints
 			for _, index := range priorityMap[priority] {
-				loadAssignment.Endpoints[index].Priority = uint32(i)
+				loadAssignment.GetEndpoints()[index].Priority = uint32(i)
 			}
 		}
 	}
