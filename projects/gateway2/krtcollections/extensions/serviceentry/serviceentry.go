@@ -221,8 +221,12 @@ func buildUpstreams(
 					UpstreamType: &v1.Upstream_Static{
 						Static: &static.UpstreamSpec{
 							UseTls: wrapperspb.Bool(false),
+							// the host is not used for routing, we end up getting EDS for the Cluster
+							// based on this upstream (see InternalEDSLabel)
 							Hosts: []*static.Host{{
+								// This carries the Addr so we can attach destination rules
 								Addr: hostname,
+								// The port is also important for Istio style SNI
 								Port: port.Number,
 							}},
 						},
