@@ -17,8 +17,7 @@ func GetHostnameForUpstream(us *v1.Upstream) string {
 		if len(uptype.Static.Hosts) == 0 {
 			return ""
 		}
-		// TODO hack for serviceentry
-		return uptype.Static.Hosts[0].SniAddr
+		return uptype.Static.Hosts[0].Addr
 	}
 	return ""
 }

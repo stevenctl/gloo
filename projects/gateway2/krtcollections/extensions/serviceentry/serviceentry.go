@@ -222,13 +222,12 @@ func buildUpstreams(
 						Static: &static.UpstreamSpec{
 							UseTls: wrapperspb.Bool(false),
 							Hosts: []*static.Host{{
-								SniAddr: hostname,
+								Addr: hostname,
 							}},
 						},
 					},
 				}
 
-				println("stevenctl build upstream: ", us.Metadata.Name)
 				out = append(out, krtcollections.UpstreamWrapper{Inner: us})
 			}
 		}
@@ -318,8 +317,10 @@ func buildEndpoints(
 
 	// consolidate Pods and WorkloadEntries
 	allWorkloads := krt.JoinCollection([]krt.Collection[selectedWorkload]{selectedPods, selectedWorkloadEntries})
-	workloadsByServiceEntry := krt.NewIndex(allWorkloads, func(o selectedWorkload) []krt.Named {
-		return o.selectedBy
+	workloadsByServiceEntry := krt.NewIndex(allWorkloads, func(o selectedWorkload) []string {
+		return slices.Map(o.selectedBy, func(n krt.Named) string {
+			return n.ResourceName()
+		})
 	})
 
 	// finally do the Endpoint generation
@@ -352,7 +353,7 @@ func buildEndpoints(
 		println("stevenctl se eps hostname: ", out.Hostname)
 		println("stevenctl se eps cls name: ", out.ClusterName)
 		if se.Spec.WorkloadSelector != nil {
-			workloads := krt.Fetch(ctx, allWorkloads, krt.FilterIndex(workloadsByServiceEntry, krt.NewNamed(se)))
+			workloads := krt.Fetch(ctx, allWorkloads, krt.FilterIndex(workloadsByServiceEntry, krt.NewNamed(se).ResourceName()))
 			for _, workload := range workloads {
 				port := resolvePort(svcPort, workload.portMapping)
 				out.Add(workload.Locality, buildEndpoint(workload.IP(), workload.AugmentedLabels, port, autoMTLS))
