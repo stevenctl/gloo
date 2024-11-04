@@ -223,6 +223,7 @@ func buildUpstreams(
 							UseTls: wrapperspb.Bool(false),
 							Hosts: []*static.Host{{
 								Addr: hostname,
+								Port: port.Number,
 							}},
 						},
 					},
