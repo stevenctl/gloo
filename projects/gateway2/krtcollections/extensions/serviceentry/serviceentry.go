@@ -283,10 +283,16 @@ func buildEndpoints(
 		}
 		labels := maps.MergeCopy(we.Labels, we.Spec.Labels)
 		locality := krtcollections.LocalityFromLabels(labels)
+		for _, se := range serviceEntries {
+			println("stevenctl: WE ", we.Name, "selected by", krt.NewNamed(se).ResourceName())
+		}
 
 		return &selectedWorkload{
 			// not actually doing selection here, but we need the portMapping field
 			portMapping: we.Spec.Ports,
+			selectedBy: slices.Map(serviceEntries, func(se seSelector) krt.Named {
+				return krt.NewNamed(se)
+			}),
 			LocalityPod: krtcollections.LocalityPod{
 				Named: krt.Named{
 					// the name should be different to avoid conflicts in krt
@@ -359,6 +365,7 @@ func buildEndpoints(
 		println("stevenctl se eps cls name: ", out.ClusterName)
 		if se.Spec.WorkloadSelector != nil {
 			workloads := krt.Fetch(ctx, allWorkloads, krt.FilterIndex(workloadsByServiceEntry, krt.NewNamed(se).ResourceName()))
+			println("stevenctl found", len(workloads), "workloads for SE", krt.NewNamed(se).ResourceName())
 			for _, workload := range workloads {
 				port := resolvePort(svcPort, workload.portMapping)
 				out.Add(workload.Locality, buildEndpoint(workload.IP(), workload.AugmentedLabels, port, autoMTLS))
