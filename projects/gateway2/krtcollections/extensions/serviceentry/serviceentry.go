@@ -282,7 +282,7 @@ func buildEndpoints(
 			return nil
 		}
 		labels := maps.MergeCopy(we.Labels, we.Spec.Labels)
-		locality := krtcollections.LocalityFromLabels(labels)
+		locality := getlocality(we.Spec.Locality, labels)
 		for _, se := range serviceEntries {
 			println("stevenctl: WE ", we.Name, "selected by", krt.NewNamed(se).ResourceName())
 		}
@@ -373,7 +373,7 @@ func buildEndpoints(
 		} else {
 			// inline endpoints
 			for _, e := range se.Spec.Endpoints {
-				locality := krtcollections.LocalityFromLabels(e.Labels)
+				locality := getlocality(e.Locality, e.Labels)
 				port := resolvePort(svcPort, e.Ports)
 				out.Add(locality, buildEndpoint(e.Address, e.Labels, port, autoMTLS))
 			}
@@ -383,6 +383,34 @@ func buildEndpoints(
 	})
 
 	return endpointsForUs
+}
+
+func getlocality(locality string, labels map[string]string) krtcollections.PodLocality {
+	if locality != "" {
+		return splitLocalityLabel(locality)
+	}
+	return krtcollections.LocalityFromLabels(labels)
+}
+
+func splitLocalityLabel(locality string) krtcollections.PodLocality {
+	items := strings.Split(locality, "/")
+	switch len(items) {
+	case 1:
+		return krtcollections.PodLocality{
+			Region: items[0],
+		}
+	case 2:
+		return krtcollections.PodLocality{
+			Region: items[0],
+			Zone:   items[1],
+		}
+	default:
+		return krtcollections.PodLocality{
+			Region:  items[0],
+			Zone:    items[1],
+			Subzone: items[2],
+		}
+	}
 }
 
 func resolvePort(svcPort *networking.ServicePort, targetPortMap map[string]uint32) uint32 {
