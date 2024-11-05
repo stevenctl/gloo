@@ -29,6 +29,11 @@ func GetPortForUpstream(us *v1.Upstream) uint32 {
 	switch uptype := us.GetUpstreamType().(type) {
 	case *v1.Upstream_Kube:
 		return uptype.Kube.GetServicePort()
+	case *v1.Upstream_Static:
+		if len(uptype.Static.Hosts) == 0 {
+			return 0
+		}
+		return uptype.Static.Hosts[0].Port
 	}
 	return 0
 }
