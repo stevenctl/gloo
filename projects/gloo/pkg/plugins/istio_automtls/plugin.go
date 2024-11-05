@@ -186,12 +186,12 @@ func buildSni(us *v1.Upstream) string {
 				us.Kube.GetServiceNamespace(),
 				"cluster.local", // TODO we need a setting like Istio has for trustDomain
 			),
-			us.Kube.ServicePort,
+			us.Kube.GetServicePort(),
 		)
 	case *v1.Upstream_Static:
-		if len(us.Static.Hosts) > 0 {
+		if len(us.Static.GetHosts()) > 0 {
 			// static upstreams use the first host
-			host := us.Static.Hosts[0]
+			host := us.Static.GetHosts()[0]
 
 			// if SNI address is set, use it directly
 			if host.GetSniAddr() != "" {

@@ -31,7 +31,7 @@ func (s *seUsPlugin) Name() string {
 
 func (s *seUsPlugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *cluster_v3.Cluster) error {
 	// not ours
-	if _, ok := in.Metadata.Labels[InternalEDSLabel]; !ok {
+	if _, ok := in.GetMetadata().GetLabels()[InternalEDSLabel]; !ok {
 		return nil
 	}
 

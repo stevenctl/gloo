@@ -26,14 +26,14 @@ func (a aggregate) Endpoints() (out []krt.Collection[EndpointsForUpstream]) {
 	for _, e := range a {
 		out = append(out, e.Endpoints()...)
 	}
-	return
+	return out
 }
 
 func (a aggregate) Upstreams() (out []krt.Collection[UpstreamWrapper]) {
 	for _, e := range a {
 		out = append(out, e.Upstreams()...)
 	}
-	return
+	return out
 }
 
 func (a aggregate) HasSynced() bool {
