@@ -2,6 +2,7 @@ package registry
 
 import (
 	gatewaykubev1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1/kube/apis/gateway.solo.io/v1"
+	"github.com/solo-io/gloo/projects/gateway2/krtcollections/extensions/serviceentry"
 	gwquery "github.com/solo-io/gloo/projects/gateway2/query"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/directresponse"
@@ -105,5 +106,6 @@ func BuildPlugins(
 		listeneroptions.NewPlugin(queries, client),
 		urlrewrite.NewPlugin(),
 		directresponse.NewPlugin(queries), // direct response needs to run after any plugin that might set an action
+		serviceentry.NewBackendPlugin(),
 	}
 }

@@ -5,6 +5,7 @@ import (
 
 	gatewaykubev1 "github.com/solo-io/gloo/projects/gateway/pkg/api/v1/kube/apis/gateway.solo.io/v1"
 	"github.com/solo-io/gloo/projects/gateway2/krtcollections"
+	"github.com/solo-io/gloo/projects/gateway2/krtcollections/extensions/serviceentry"
 	"github.com/solo-io/gloo/projects/gateway2/query"
 	"github.com/solo-io/gloo/projects/gateway2/translator"
 	"github.com/solo-io/gloo/projects/gateway2/translator/plugins/registry"
@@ -57,9 +58,13 @@ func NewK8sGatewayExtensions(
 	ctx context.Context,
 	params K8sGatewayExtensionsFactoryParameters,
 ) (K8sGatewayExtensions, error) {
+	seExtension := serviceentry.New(ctx,
+		params.IstioClient, params.CoreCollections.AugmentedPods)
+
 	queries := query.NewData(
 		params.Mgr.GetClient(),
 		params.Mgr.GetScheme(),
+		query.WithBackendRefResolvers(seExtension),
 	)
 
 	return &k8sGatewayExtensions{
@@ -67,6 +72,7 @@ func NewK8sGatewayExtensions(
 		collections:    params.CoreCollections,
 		statusReporter: params.StatusReporter,
 		queries:        queries,
+		krtExt:         krtcollections.Aggregate(seExtension),
 	}, nil
 }
 
@@ -77,6 +83,7 @@ type k8sGatewayExtensions struct {
 	translator     translator.K8sGwTranslator
 	pluginRegistry registry.PluginRegistry
 	queries        query.GatewayQueries
+	krtExt         krtcollections.KRTExtensions
 }
 
 func (e *k8sGatewayExtensions) GetTranslator(_ context.Context, _ *apiv1.Gateway, pluginRegistry registry.PluginRegistry) translator.K8sGwTranslator {
@@ -95,5 +102,5 @@ func (e *k8sGatewayExtensions) CreatePluginRegistry(_ context.Context) registry.
 }
 
 func (e *k8sGatewayExtensions) KRTExtensions() krtcollections.KRTExtensions {
-	return krtcollections.Aggregate()
+	return e.krtExt
 }
