@@ -75,6 +75,11 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 		return nil
 	}
 
+	// something else converted this to an EDS cluster
+	if out.EdsClusterConfig != nil {
+		return nil
+	}
+
 	spec := staticSpec.Static
 	var foundSslPort bool
 	var hostname string

@@ -38,7 +38,10 @@ func (p *seUsPlugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out
 		return nil
 	}
 
+	// use EDS
 	xds.SetEdsOnCluster(out, p.settings)
+	// clear a non-EDS CLA
+	out.LoadAssignment = nil
 
 	return nil
 }
