@@ -148,11 +148,12 @@ func AugmentLabels(locality PodLocality, labels map[string]string) {
 // "Pods may be allocated at most 1 value for each of IPv4 and IPv6."
 //   - k8s docs
 func extractPodIPs(pod *corev1.Pod) []string {
-	addrs := []string{pod.Status.PodIP}
 	if len(pod.Status.PodIPs) > 0 {
-		addrs = slices.Map(pod.Status.PodIPs, func(e corev1.PodIP) string {
+		return slices.Map(pod.Status.PodIPs, func(e corev1.PodIP) string {
 			return e.IP
 		})
+	} else if pod.Status.PodIP != "" {
+		return []string{pod.Status.PodIP}
 	}
-	return addrs
+	return nil
 }
