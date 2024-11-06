@@ -76,7 +76,7 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 	}
 
 	// something else converted this to an EDS cluster
-	if out.EdsClusterConfig != nil {
+	if out.GetEdsClusterConfig() != nil {
 		return nil
 	}
 
