@@ -361,6 +361,7 @@ func setRouteAction(
 					Destination: dest,
 					Weight:      weight,
 				})
+				break;
 			}
 		}
 		// TODO break out a buildDestination func to avoid this awkwardness
