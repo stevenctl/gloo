@@ -16,6 +16,7 @@ import (
 	v1 "github.com/solo-io/gloo/projects/gloo/pkg/api/v1"
 	v1static "github.com/solo-io/gloo/projects/gloo/pkg/api/v1/options/static"
 	"github.com/solo-io/gloo/projects/gloo/pkg/plugins"
+	"github.com/solo-io/gloo/projects/gloo/pkg/plugins/edsupstream"
 	upstream_proxy_protocol "github.com/solo-io/gloo/projects/gloo/pkg/plugins/utils/upstreamproxyprotocol"
 	"github.com/solo-io/gloo/projects/gloo/pkg/utils"
 	"github.com/solo-io/go-utils/contextutils"
@@ -75,8 +76,8 @@ func (p *plugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out *en
 		return nil
 	}
 
-	// something else converted this to an EDS cluster so return early and let them handle this Upstream
-	if out.GetEdsClusterConfig() != nil {
+	// explicitly requested to be treated as an EDS cluster
+	if _, ok := in.GetMetadata().GetLabels()[edsupstream.InternalEDSLabel]; ok {
 		return nil
 	}
 

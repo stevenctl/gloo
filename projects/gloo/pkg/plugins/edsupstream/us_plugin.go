@@ -42,6 +42,8 @@ func (p *seUsPlugin) ProcessUpstream(params plugins.Params, in *v1.Upstream, out
 	xds.SetEdsOnCluster(out, p.settings)
 	// clear a non-EDS CLA
 	out.LoadAssignment = nil
+	// clear DNS only things
+	out.DnsRefreshRate = nil
 
 	return nil
 }
