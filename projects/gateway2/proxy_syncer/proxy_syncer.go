@@ -344,7 +344,7 @@ func (s *ProxySyncer) Init(ctx context.Context) error {
 			uss = append(uss, krtcollections.UpstreamWrapper{Inner: us})
 		}
 		return uss
-	}, krt.WithName("KuberntesServiceUpstreams"))
+	}, krt.WithName("KubernetesServiceUpstreams"))
 
 	finalUpstreams := krt.JoinCollection(append(
 		[]krt.Collection[krtcollections.UpstreamWrapper]{

@@ -54,7 +54,7 @@ type K8sGatewayExtensionsFactory func(
 
 // NewK8sGatewayExtensions returns the Open Source implementation of K8sGatewayExtensions
 func NewK8sGatewayExtensions(
-	ctx context.Context,
+	_ context.Context,
 	params K8sGatewayExtensionsFactoryParameters,
 ) (K8sGatewayExtensions, error) {
 	queries := query.NewData(
