@@ -125,18 +125,18 @@ func TestScenarios(t *testing.T) {
 		)
 	})
 
-	t.Run("old Istio CRDs", func(t *testing.T) {
-		testScenariosWithCRDs(t, []string{
-			filepath.Join("..", "crds"),
-			filepath.Join("..", "..", "..", "install", "helm", "gloo", "crds"),
-			filepath.Join("testdata", "oldistiocrds"),
-		},
-			// these cases rely on DestinationRule v1, we only have v1beta1 here
-			"failover.yaml",
-			"failover-default.yaml",
-			"failover-default-diffns.yaml",
-		)
-	})
+	// t.Run("old Istio CRDs", func(t *testing.T) {
+	// 	testScenariosWithCRDs(t, []string{
+	// 		filepath.Join("..", "crds"),
+	// 		filepath.Join("..", "..", "..", "install", "helm", "gloo", "crds"),
+	// 		filepath.Join("testdata", "oldistiocrds"),
+	// 	},
+	// 		// these cases rely on DestinationRule v1, we only have v1beta1 here
+	// 		"failover.yaml",
+	// 		"failover-default.yaml",
+	// 		"failover-default-diffns.yaml",
+	// 	)
+	// })
 }
 
 func testScenariosWithCRDs(

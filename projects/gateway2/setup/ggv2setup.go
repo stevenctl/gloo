@@ -125,13 +125,9 @@ func StartGGv2WithConfig(ctx context.Context,
 
 	ucc := uccBuilder(ctx, setupOpts.KrtDebugger, augmentedPodsForUcc)
 
-	settingsSingle := krt.NewSingleton(func(ctx krt.HandlerContext) *glookubev1.Settings {
-		s := krt.FetchOne(ctx, setting,
+	settingsSingle := krt.NewSingleton(func(ctx krt.HandlerContext) **glookubev1.Settings {
+		return krt.FetchOne(ctx, setting,
 			krt.FilterObjectName(settingsNns))
-		if s != nil {
-			return *s
-		}
-		return nil
 	}, krt.WithName("GlooSettingsSingleton"))
 
 	serviceClient := kclient.New[*corev1.Service](kubeClient)
@@ -172,7 +168,7 @@ func StartGGv2WithConfig(ctx context.Context,
 
 	logger.Info("waiting for cache sync")
 	kubeClient.RunAndWait(ctx.Done())
-	setting.Synced().WaitUntilSynced(ctx.Done())
+	setting.WaitUntilSynced(ctx.Done())
 
 	logger.Info("starting controller")
 	return c.Start(ctx)

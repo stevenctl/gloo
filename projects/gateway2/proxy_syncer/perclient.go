@@ -13,8 +13,8 @@ import (
 )
 
 func snapshotPerClient(l *zap.Logger, dbg *krt.DebugHandler, uccCol krt.Collection[krtcollections.UniqlyConnectedClient],
-	mostXdsSnapshots krt.Collection[XdsSnapWrapper], endpoints PerClientEnvoyEndpoints, clusters PerClientEnvoyClusters) krt.Collection[XdsSnapWrapper] {
-
+	mostXdsSnapshots krt.Collection[XdsSnapWrapper], endpoints PerClientEnvoyEndpoints, clusters PerClientEnvoyClusters,
+) krt.Collection[XdsSnapWrapper] {
 	xdsSnapshotsForUcc := krt.NewCollection(uccCol, func(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) *XdsSnapWrapper {
 		maybeMostlySnap := krt.FetchOne(kctx, mostXdsSnapshots, krt.FilterKey(ucc.Role))
 		if maybeMostlySnap == nil {
@@ -22,7 +22,25 @@ func snapshotPerClient(l *zap.Logger, dbg *krt.DebugHandler, uccCol krt.Collecti
 			return nil
 		}
 		genericSnap := maybeMostlySnap.snap
+
+		// what happens is:
+		// 1. We generate clusters, but we have 0 clients connected so we say "per-client clusters is synced"
+		// 2. A client connects. Now we race between 3a and 3b (3a almost always wins)
+		// 3a. UCC changed so we trigger this snapshotPerClient collection (primary dep), which fetch-per-client clusters
+		// 3b. UCC changed so we trigger per-client clusters. It will likely be fetched before we modify it.
+		// 4. The perClientClusters changed, so we trigger snapshotPerClient again and are eventually consistent
+
+		// this is just: krt.Fetch(kctx, iu.clusters, krt.FilterIndex(iu.index, ucc.ResourceName()))
 		clustersForUcc := clusters.FetchClustersForClient(kctx, ucc)
+
+		// this check fixes the race (kind-of)
+		// the check could somehow know the expected number of _per client outputs
+		// and return nil if it doesn't match
+		// even then this is _still_ dangerous because we could have an error generating a cluster
+		// that only occurs on the per-client path, then we'd never build the snapshot
+		if len(clustersForUcc) == 0 {
+			return nil
+		}
 
 		clustersProto := make([]envoycache.Resource, 0, len(clustersForUcc))
 		var clustersHash uint64

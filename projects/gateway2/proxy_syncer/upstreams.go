@@ -21,6 +21,7 @@ import (
 	"go.uber.org/zap"
 	"google.golang.org/protobuf/types/known/wrapperspb"
 	"istio.io/istio/pkg/kube/krt"
+	"istio.io/istio/pkg/ptr"
 )
 
 type uccWithCluster struct {
@@ -44,7 +45,9 @@ type PerClientEnvoyClusters struct {
 }
 
 func (iu *PerClientEnvoyClusters) FetchClustersForClient(kctx krt.HandlerContext, ucc krtcollections.UniqlyConnectedClient) []uccWithCluster {
-	return krt.Fetch(kctx, iu.clusters, krt.FilterIndex(iu.index, ucc.ResourceName()))
+	cc := krt.Fetch(kctx, iu.clusters, krt.FilterIndex(iu.index, ucc.ResourceName()))
+
+	return cc
 }
 
 func NewPerClientEnvoyClusters(
@@ -54,7 +57,7 @@ func NewPerClientEnvoyClusters(
 	upstreams krt.Collection[krtcollections.UpstreamWrapper],
 	uccs krt.Collection[krtcollections.UniqlyConnectedClient],
 	ks krt.Collection[RedactedSecret],
-	settings krt.Singleton[glookubev1.Settings],
+	settings krt.Singleton[*glookubev1.Settings],
 	destinationRulesIndex DestinationRuleIndex,
 ) PerClientEnvoyClusters {
 	ctx = contextutils.WithLogger(ctx, "upstream-translator")
@@ -63,9 +66,10 @@ func NewPerClientEnvoyClusters(
 	clusters := krt.NewManyCollection(upstreams, func(kctx krt.HandlerContext, up krtcollections.UpstreamWrapper) []uccWithCluster {
 		logger := logger.With(zap.Stringer("upstream", up))
 		uccs := krt.Fetch(kctx, uccs)
+		println("stevenctl gen ucc cluster; ucc has len ", len(uccs))
 		uccWithClusterRet := make([]uccWithCluster, 0, len(uccs))
 		secrets := krt.Fetch(kctx, ks)
-		ksettings := krt.FetchOne(kctx, settings.AsCollection())
+		ksettings := ptr.Flatten(krt.FetchOne(kctx, settings.AsCollection()))
 		settings := &ksettings.Spec
 
 		for _, ucc := range uccs {

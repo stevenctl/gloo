@@ -6,9 +6,11 @@ import (
 
 // KRTExtensions allows appending to the core KRT collections used for XDS.
 type KRTExtensions interface {
-	Synced() krt.Syncer
 	Endpoints() []krt.Collection[EndpointsForUpstream]
 	Upstreams() []krt.Collection[UpstreamWrapper]
+
+	Synced() krt.Syncer
+	HasSynced() bool
 }
 
 var _ KRTExtensions = aggregate{}
@@ -47,10 +49,10 @@ func (a aggregate) WaitUntilSynced(stop <-chan struct{}) bool {
 func (a aggregate) Synced() krt.Syncer {
 	syncers := FlattenedSyncers{}
 	for _, c := range a.Endpoints() {
-		syncers = append(syncers, c.Synced())
+		syncers = append(syncers, c)
 	}
 	for _, c := range a.Upstreams() {
-		syncers = append(syncers, c.Synced())
+		syncers = append(syncers, c)
 	}
 	return syncers
 }
